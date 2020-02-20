@@ -47,11 +47,13 @@
 #define SYS_epoll_wait (SYS_BASE + 252)
 #define SYS_epoll_create1 (SYS_BASE + 357)
 #define SYS_pipe2 (SYS_BASE + 359)
+#define SYS_ioctl (SYS_BASE + 54)
 #define SYS_fcntl (SYS_BASE + 55)
 #define SYS_access (SYS_BASE + 33)
 #define SYS_connect (SYS_BASE + 283)
 #define SYS_socket (SYS_BASE + 281)
 #define SYS_brk (SYS_BASE + 45)
+#define SYS_perf_event_open (SYS_BASE + 364)
 
 #define ARM_BASE (SYS_BASE + 0x0f0000)
 
@@ -712,4 +714,36 @@ TEXT runtime·sbrk0(SB),NOSPLIT,$0-4
 	RET
 
 TEXT runtime·sigreturn(SB),NOSPLIT,$0-0
+	RET
+
+// func perfEventOpen(attr *perfEventAttr, pid uintptr, cpu, groupFd int32, flags uintptr) int32
+TEXT runtime·perfEventOpen(SB),NOSPLIT,$0-24
+	MOVW	attr+0(FP), R0
+	MOVW	pid+4(FP), R1
+	MOVW	cpu+8(FP), R2
+	MOVW	groupFd+12(FP), R3
+	MOVW	flags+16(FP), R4
+	MOVW	$SYS_perf_event_open, R7
+	SWI     $0
+	MOVW    R0, ret+20(FP)
+	RET
+
+// func ioctl(fd, req int32, arg uintptr) int32
+TEXT runtime·ioctl(SB),NOSPLIT,$0-16
+	MOVW	fd+0(FP), R0
+	MOVW	req+4(FP), R1
+	MOVW	arg+8(FP), R2
+	MOVW	$SYS_ioctl, R7
+	SWI     $0
+	MOVW    R0, ret+12(FP)
+	RET
+
+// func fcntl(fd, cmd int32, arg uintptr) int32
+TEXT runtime·fcntl(SB),NOSPLIT,$0-16
+	MOVW	fd+0(FP), R0
+	MOVW	cmd+4(FP), R1
+	MOVW	arg+8(FP), R2
+	MOVW	$SYS_fcntl, R7
+	SWI     $0
+	MOVW    R0, ret+12(FP)
 	RET

@@ -22,6 +22,7 @@
 #define SYS_rt_sigprocmask	14
 #define SYS_rt_sigreturn	15
 #define SYS_pipe		22
+#define SYS_ioctl       	16
 #define SYS_sched_yield 	24
 #define SYS_mincore		27
 #define SYS_madvise		28
@@ -50,6 +51,7 @@
 #define SYS_epoll_pwait		281
 #define SYS_epoll_create1	291
 #define SYS_pipe2		293
+#define SYS_perf_event_open 	298
 
 TEXT runtime·exit(SB),NOSPLIT,$0-4
 	MOVL	code+0(FP), DI
@@ -785,4 +787,36 @@ TEXT ·mlock(SB),NOSPLIT,$0-24
 	MOVL    $SYS_mlock, AX
 	SYSCALL
 	MOVQ	AX, ret+16(FP)
+	RET
+
+// func perfEventOpen(attr *perfEventAttr, pid uintptr, cpu, groupFd int32, flags uintptr) int32
+TEXT runtime·perfEventOpen(SB),NOSPLIT,$0-36
+	MOVQ	attr+0(FP), DI
+	MOVQ	pid+8(FP), SI
+	MOVL	cpu+16(FP), DX
+	MOVL	groupFd+20(FP), R10
+	MOVQ	flags+24(FP), R8
+	MOVQ	$SYS_perf_event_open, AX
+	SYSCALL
+        MOVL    AX, ret+32(FP)
+	RET
+
+// func ioctl(fd, req int32, arg uintptr) int32
+TEXT runtime·ioctl(SB),NOSPLIT,$0-20
+	MOVL	fd+0(FP), DI
+	MOVL	req+4(FP), SI
+	MOVQ	arg+8(FP), DX
+	MOVQ	$SYS_ioctl, AX
+	SYSCALL
+        MOVL    AX, ret+16(FP)
+	RET
+
+// func fcntl(fd, cmd int32, arg uintptr) int32
+TEXT runtime·fcntl(SB),NOSPLIT,$0-20
+	MOVL	fd+0(FP), DI
+	MOVL	cmd+4(FP), SI
+	MOVQ	arg+8(FP), DX
+	MOVQ	$SYS_fcntl, AX
+	SYSCALL
+        MOVL    AX, ret+16(FP)
 	RET

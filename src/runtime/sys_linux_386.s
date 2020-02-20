@@ -34,6 +34,7 @@
 #define SYS_kill		37
 #define SYS_pipe		42
 #define SYS_brk 		45
+#define SYS_ioctl       	54
 #define SYS_fcntl		55
 #define SYS_munmap		91
 #define SYS_socketcall		102
@@ -62,6 +63,7 @@
 #define SYS_tgkill		270
 #define SYS_epoll_create1	329
 #define SYS_pipe2		331
+#define SYS_perf_event_open 	336
 
 TEXT runtime·exit(SB),NOSPLIT,$0
 	MOVL	$SYS_exit_group, AX
@@ -794,4 +796,36 @@ TEXT ·mlock(SB),NOSPLIT,$0-12
 	MOVL    len+4(FP), CX
 	INVOKE_SYSCALL
 	MOVL	AX, ret+8(FP)
+	RET
+
+// func perfEventOpen(attr *perfEventAttr, pid uintptr, cpu, groupFd int32, flags uintptr) int32
+TEXT runtime·perfEventOpen(SB),NOSPLIT,$0-24
+	MOVL	attr+0(FP), BX
+	MOVL	pid+4(FP), CX
+	MOVL	cpu+8(FP), DX
+	MOVL	groupFd+12(FP), SI
+	MOVL	flags+16(FP), DI
+	MOVL	$SYS_perf_event_open, AX
+	INVOKE_SYSCALL
+	MOVL	AX, ret+20(FP)
+	RET
+
+// func ioctl(fd, req int32, arg uintptr) int32
+TEXT runtime·ioctl(SB),NOSPLIT,$0-16
+	MOVL	fd+0(FP), BX
+	MOVL	req+4(FP), CX
+	MOVL	arg+8(FP), DX
+	MOVL	$SYS_ioctl, AX
+	INVOKE_SYSCALL
+	MOVL	AX, ret+12(FP)
+	RET
+
+// func fcntl(fd, cmd int32, arg uintptr) int32
+TEXT runtime·fcntl(SB),NOSPLIT,$0-16
+	MOVL	fd+0(FP), BX
+	MOVL	cmd+4(FP), CX
+	MOVL	arg+8(FP), DX
+	MOVL	$SYS_fcntl, AX
+	INVOKE_SYSCALL
+	MOVL	AX, ret+12(FP)
 	RET
