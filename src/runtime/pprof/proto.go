@@ -29,11 +29,12 @@ func funcPC(f interface{}) uintptr {
 // A profileBuilder writes a profile incrementally from a
 // stream of profile samples delivered by the runtime.
 type profileBuilder struct {
-	start      time.Time
-	end        time.Time
-	havePeriod bool
-	period     int64
-	m          profMap
+	start        time.Time
+	end          time.Time
+	havePeriod   bool
+	period       int64
+	isPMUEnabled bool
+	m            profMap
 
 	// encoding state
 	w         io.Writer
@@ -251,7 +252,7 @@ type locInfo struct {
 
 // newProfileBuilder returns a new profileBuilder.
 // CPU profiling data obtained from the runtime can be added
-// by calling b.addCPUData, and then the eventual profile
+// by calling b.addCPUData / b.addTimerData, and then the eventual profile
 // can be obtained by calling b.finish.
 func newProfileBuilder(w io.Writer) *profileBuilder {
 	zw, _ := gzip.NewWriterLevel(w, gzip.BestSpeed)
@@ -268,26 +269,8 @@ func newProfileBuilder(w io.Writer) *profileBuilder {
 	return b
 }
 
-// addCPUData adds the CPU profiling data to the profile.
-// The data must be a whole number of records,
-// as delivered by the runtime.
-func (b *profileBuilder) addCPUData(data []uint64, tags []unsafe.Pointer) error {
-	if !b.havePeriod {
-		// first record is period
-		if len(data) < 3 {
-			return fmt.Errorf("truncated profile")
-		}
-		if data[0] != 3 || data[2] == 0 {
-			return fmt.Errorf("malformed profile")
-		}
-		// data[2] is sampling rate in Hz. Convert to sampling
-		// period in nanoseconds.
-		b.period = 1e9 / int64(data[2])
-		b.havePeriod = true
-		data = data[3:]
-	}
-
-	// Parse CPU samples from the profile.
+func (b *profileBuilder) addData(data []uint64, tags []unsafe.Pointer) error {
+	// Parse samples from the profile.
 	// Each sample is 3+n uint64s:
 	//	data[0] = 3+n
 	//	data[1] = time stamp (ignored)
@@ -333,19 +316,46 @@ func (b *profileBuilder) addCPUData(data []uint64, tags []unsafe.Pointer) error 
 	return nil
 }
 
-// build completes and returns the constructed profile.
-func (b *profileBuilder) build() {
-	b.end = time.Now()
-
-	b.pb.int64Opt(tagProfile_TimeNanos, b.start.UnixNano())
-	if b.havePeriod { // must be CPU profile
-		b.pbValueType(tagProfile_SampleType, "samples", "count")
-		b.pbValueType(tagProfile_SampleType, "cpu", "nanoseconds")
-		b.pb.int64Opt(tagProfile_DurationNanos, b.end.Sub(b.start).Nanoseconds())
-		b.pbValueType(tagProfile_PeriodType, "cpu", "nanoseconds")
-		b.pb.int64Opt(tagProfile_Period, b.period)
+// addTimerData adds the OS timer-based profiling data to the profile.
+// The data must be a whole number of records,
+// as delivered by the runtime.
+func (b *profileBuilder) addTimerData(data []uint64, tags []unsafe.Pointer) error {
+	if !b.havePeriod {
+		// first record is period
+		if len(data) < 3 {
+			return fmt.Errorf("truncated profile")
+		}
+		if data[0] != 3 || data[2] == 0 {
+			return fmt.Errorf("malformed profile")
+		}
+		// data[2] is sampling rate in Hz. Convert to sampling
+		// period in nanoseconds.
+		b.period = 1e9 / int64(data[2])
+		b.havePeriod = true
+		data = data[3:]
 	}
 
+	return b.addData(data, tags)
+}
+
+func (b *profileBuilder) addCPUData(data []uint64, tags []unsafe.Pointer) error {
+	if !b.isPMUEnabled {
+		// first record is period
+		if len(data) < 3 {
+			return fmt.Errorf("truncated profile")
+		}
+		if data[0] != 3 || data[2] == 0 {
+			return fmt.Errorf("malformed profile")
+		}
+		b.isPMUEnabled = true
+		b.period = int64(data[2])
+		data = data[3:]
+	}
+
+	return b.addData(data, tags)
+}
+
+func (b *profileBuilder) profileBuild() {
 	values := []int64{0, 0}
 	var locs []uint64
 
@@ -569,6 +579,35 @@ func (b *profileBuilder) emitLocation() uint64 {
 
 	b.flush()
 	return id
+}
+
+// build completes and returns the constructed profile.
+func (b *profileBuilder) build() {
+	b.end = time.Now()
+
+	b.pb.int64Opt(tagProfile_TimeNanos, b.start.UnixNano())
+	if b.havePeriod { // must be CPU profile
+		b.pbValueType(tagProfile_SampleType, "samples", "count")
+		b.pbValueType(tagProfile_SampleType, "cpu", "nanoseconds")
+		b.pb.int64Opt(tagProfile_DurationNanos, b.end.Sub(b.start).Nanoseconds())
+		b.pbValueType(tagProfile_PeriodType, "cpu", "nanoseconds")
+		b.pb.int64Opt(tagProfile_Period, b.period)
+	}
+
+	b.profileBuild()
+}
+
+func (b *profileBuilder) buildCPUProfile(eventId cpuEvent, eventName string) {
+	if eventId == _CPUPROF_OS_TIMER {
+		b.build()
+	} else {
+		b.pb.int64Opt(tagProfile_TimeNanos, b.start.UnixNano())
+		b.pbValueType(tagProfile_SampleType, "samples", "count")
+		b.pbValueType(tagProfile_SampleType, eventName, "count")
+		b.pbValueType(tagProfile_PeriodType, eventName, "count")
+		b.pb.int64Opt(tagProfile_Period, b.period)
+		b.profileBuild()
+	}
 }
 
 // readMapping reads /proc/self/maps and writes mappings to b.pb.

@@ -299,6 +299,10 @@ func osinit() {
 	ncpu = getproccount()
 	physHugePageSize = getHugePageSize()
 	osArchInit()
+	// following the same convention as other write once variables in this function and
+	// assuming that there exists a memory fence before anybody reads these values
+	setThreadPMUProfilerFunc = setThreadPMUProfiler
+	sigprofPMUHandlerFunc = sigprofPMUHandler
 }
 
 var urandom_dev = []byte("/dev/urandom\x00")
@@ -342,9 +346,22 @@ func mpreinit(mp *m) {
 	if gsignalInitQuirk != nil {
 		gsignalInitQuirk(mp.gsignal)
 	}
+	minitCPUProfiler(mp)
 }
 
 func gettid() uint32
+
+type cpuProfileResource struct {
+	eventFd      int32
+	eventMmapBuf unsafe.Pointer
+}
+
+func minitCPUProfiler(mp *m) {
+	r := make([]cpuProfileResource, _CPUPROF_EVENTS_MAX)
+	for i := _CPUPROF_FIRST_EVENT; i < _CPUPROF_EVENTS_MAX; i++ {
+		mp.cpuProfileHandle[i] = unsafe.Pointer(&r[i])
+	}
+}
 
 // Called to initialize a new m (including the bootstrap m).
 // Called on the new thread, cannot allocate memory.
@@ -502,3 +519,137 @@ func signalM(mp *m, sig int) {
 
 //go:noescape
 func fcntl(fd, cmd int32, arg uintptr) int32
+
+func setThreadPMUProfiler(eventId cpuEvent, profConfig *cpuProfileConfig) {
+	_g_ := getg()
+	resourceHandle := (*cpuProfileResource)(_g_.m.cpuProfileHandle[eventId])
+	// First, stop and close the event resources.
+	if _g_.m.profConfig[eventId] != nil {
+		perfStopCounter(resourceHandle.eventFd)
+		closefd(resourceHandle.eventFd)
+		_g_.m.profConfig[eventId] = nil
+	}
+	if resourceHandle.eventMmapBuf != nil {
+		perfUnsetMmap(resourceHandle.eventMmapBuf)
+		resourceHandle.eventMmapBuf = nil
+	}
+	if profConfig == nil {
+		// The request was for stopping.
+		return
+	}
+
+	// profConfig != nil
+	var perfAttr perfEventAttr
+	perfAttrInit(eventId, profConfig, &perfAttr)
+	fd := perfEventOpen(&perfAttr, 0, -1, -1, uintptr(0))
+	if fd == -1 {
+		println("Linux perf event open failed")
+		return
+	}
+
+	// create mmap buffer for this file
+	mmapBuf := perfSetMmap(fd)
+	if mmapBuf == nil {
+		closefd(fd)
+		println("Failed to set perf mmap")
+		return
+	}
+	flag := fcntl(fd, _F_GETFL, 0)
+	if flag == -1 {
+		closefd(fd)
+		perfUnsetMmap(mmapBuf)
+		println("fcntl failed to get _F_GETFL for the PMU event")
+		return
+	}
+	err := fcntl(fd, _F_SETFL, uintptr(flag|_O_ASYNC))
+	if err != 0 {
+		closefd(fd)
+		perfUnsetMmap(mmapBuf)
+		println("fcntl failed to set _F_SETFL _O_ASYNC for the PMU event")
+		return
+	}
+	err = fcntl(fd, _F_SETSIG, uintptr(_SIGPROF))
+	if err != 0 {
+		closefd(fd)
+		perfUnsetMmap(mmapBuf)
+		println("fcntl failed to set _F_SETSIG _SIGPROF for the PMU event")
+		return
+	}
+
+	fOwnEx := fOwnerEx{_F_OWNER_TID, int32(gettid())}
+	err = fcntl(fd, _F_SETOWN_EX, uintptr(unsafe.Pointer(&fOwnEx)))
+	if err != 0 {
+		closefd(fd)
+		perfUnsetMmap(mmapBuf)
+		println("fcntl failed to set the owner of the perf event file")
+		return
+	}
+
+	_g_.m.profConfig[eventId] = profConfig
+	resourceHandle.eventMmapBuf = mmapBuf
+	resourceHandle.eventFd = fd
+	if !perfResetCounter(fd) {
+		closefd(fd)
+		perfUnsetMmap(mmapBuf)
+		_g_.m.profConfig[eventId] = nil
+		resourceHandle.eventMmapBuf = nil
+		println("ioctl failed to reset the perf event counter")
+		return
+	}
+	if !perfStartCounter(fd) {
+		closefd(fd)
+		perfUnsetMmap(mmapBuf)
+		_g_.m.profConfig[eventId] = nil
+		resourceHandle.eventMmapBuf = nil
+		println("ioctl failed to start the perf event counter")
+		return
+	}
+}
+
+//go:nowritebarrierrec
+//go:nosplit
+func sigprofPMUHandler(hasG bool, info *siginfo, c *sigctxt, gp *g, _g_ *g) {
+	if _g_.m.profileSetup == 1 {
+		return
+	}
+	fd := info.si_fd
+	var eventId cpuEvent = _CPUPROF_EVENTS_MAX
+	// Disable all FDs
+	for i := _CPUPROF_FIRST_PMU_EVENT; i < _CPUPROF_EVENTS_MAX; i++ {
+		resourceHandle := (*cpuProfileResource)(_g_.m.cpuProfileHandle[i])
+		if _g_.m.profConfig[i] != nil {
+			perfStopCounter(resourceHandle.eventFd)
+			// Find the perf_events file descriptor that matches the file descriptor
+			// seen in the signal hander. Additionally, the profConfig must be non nil
+			// because an old fd can be left uncleared in the eventFds array.
+			if resourceHandle.eventFd == fd {
+				eventId = i
+			}
+		}
+	}
+	for i := _CPUPROF_FIRST_PMU_EVENT; i < _CPUPROF_EVENTS_MAX; i++ {
+		resourceHandle := (*cpuProfileResource)(_g_.m.cpuProfileHandle[i])
+		if resourceHandle.eventFd == fd && _g_.m.profConfig[i] != nil {
+			eventId = i
+			break
+		}
+	}
+	if eventId != _CPUPROF_EVENTS_MAX {
+		resourceHandle := (*cpuProfileResource)(_g_.m.cpuProfileHandle[eventId])
+		mmapBuf := (*perfEventMmapPage)(resourceHandle.eventMmapBuf)
+		// TODO: make use of the rich data coming from PMUs.
+		perfConsumeSampleData(mmapBuf, _g_.m.profConfig[eventId])
+		if hasG {
+			sigprof(c.sigpc(), c.sigsp(), c.siglr(), gp, _g_.m, eventId)
+		} else {
+			sigprofNonGoPC(c.sigpc(), eventId)
+		}
+	}
+	// Enable all FDs
+	for i := _CPUPROF_FIRST_PMU_EVENT; i < _CPUPROF_EVENTS_MAX; i++ {
+		resourceHandle := (*cpuProfileResource)(_g_.m.cpuProfileHandle[i])
+		if _g_.m.profConfig[i] != nil {
+			perfStartCounter(resourceHandle.eventFd)
+		}
+	}
+}
