@@ -1087,3 +1087,14 @@ TEXT runtime·panicExtendSlice3CU(SB),NOSPLIT,$0-12
 	MOVW	R0, lo+4(FP)
 	MOVW	R1, y+8(FP)
 	JMP	runtime·goPanicExtendSlice3CU(SB)
+TEXT runtime·mb(SB),NOSPLIT,$0-0
+	DMB	MB_ST
+	RET
+TEXT runtime·rmb(SB),NOSPLIT,$0-0
+// Not fine tuned for reads
+	DMB	MB_ST
+	RET
+TEXT runtime·wmb(SB),NOSPLIT,$0-0
+// Not fine tuned for writes
+	DMB	MB_ST
+	RET
