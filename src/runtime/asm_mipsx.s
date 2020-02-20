@@ -894,3 +894,12 @@ TEXT runtime·panicExtendSlice3CU(SB),NOSPLIT,$0-12
 	MOVW	R1, lo+4(FP)
 	MOVW	R2, y+8(FP)
 	JMP	runtime·goPanicExtendSlice3CU(SB)
+TEXT runtime·mb(SB),NOSPLIT,$0-0
+	SYNC
+	RET
+TEXT runtime·rmb(SB),NOSPLIT,$0-0
+	SYNC
+	RET
+TEXT runtime·wmb(SB),NOSPLIT,$0-0
+	SYNC
+	RET

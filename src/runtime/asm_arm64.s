@@ -1314,3 +1314,14 @@ TEXT runtime·panicSlice3CU(SB),NOSPLIT,$0-16
 	MOVD	R0, x+0(FP)
 	MOVD	R1, y+8(FP)
 	JMP	runtime·goPanicSlice3CU(SB)
+TEXT runtime·mb(SB),NOSPLIT,$0-0
+	DMB	$0xe	// DMB ST
+	RET
+TEXT runtime·rmb(SB),NOSPLIT,$0-0
+	DMB	$0xe	// DMB ST
+	RET
+TEXT runtime·wmb(SB),NOSPLIT,$0-0
+	DMB     $0xe    // DMB ST
+	RET
+
+

@@ -816,6 +816,15 @@ TEXT runtime·panicSlice3CU(SB),NOSPLIT,$0-16
 	MOV	T0, x+0(FP)
 	MOV	T1, y+8(FP)
 	JMP	runtime·goPanicSlice3CU(SB)
+TEXT runtime·mb(SB),NOSPLIT,$0-0
+        FENCE
+        RET
+TEXT runtime·rmb(SB),NOSPLIT,$0-0
+        FENCE
+        RET
+TEXT runtime·wmb(SB),NOSPLIT,$0-0
+        FENCE
+        RET
 
 DATA	runtime·mainPC+0(SB)/8,$runtime·main(SB)
 GLOBL	runtime·mainPC(SB),RODATA,$8
