@@ -46,6 +46,8 @@ var testFlagDefn = []*cmdflag.Defn{
 	{Name: "coverprofile", PassToTest: true},
 	{Name: "cpu", PassToTest: true},
 	{Name: "cpuprofile", PassToTest: true},
+	{Name: "cpuprofileevent", PassToTest: true},
+	{Name: "cpuprofileperiod", PassToTest: true},
 	{Name: "failfast", BoolVar: new(bool), PassToTest: true},
 	{Name: "list", PassToTest: true},
 	{Name: "memprofile", PassToTest: true},
