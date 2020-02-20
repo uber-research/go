@@ -132,12 +132,54 @@ func Profile(w http.ResponseWriter, r *http.Request) {
 	// because if it does it starts writing.
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", `attachment; filename="profile"`)
-	if err := pprof.StartCPUProfile(w); err != nil {
-		// StartCPUProfile failed, so no writes yet.
+
+	eventName := r.FormValue("event")
+	if eventName == "" {
+		eventName = "timer"
+	}
+
+	var period uint64
+	if eventName != "timer" {
+		if p, e := strconv.ParseUint(r.FormValue("period"), 10, 64); e == nil {
+			period = p
+		}
+		// passing down a zero value.
+	}
+	err = nil
+	switch eventName {
+	case "timer":
+		err = pprof.StartCPUProfile(w)
+	case "cycles":
+		err = pprof.StartCPUProfileWithConfig(pprof.CPUCycles(w, period))
+	case "instructions":
+		err = pprof.StartCPUProfileWithConfig(pprof.CPUInstructions(w, period))
+	case "cacheReferences":
+		err = pprof.StartCPUProfileWithConfig(pprof.CPUCacheReferences(w, period))
+	case "cacheMisses":
+		err = pprof.StartCPUProfileWithConfig(pprof.CPUCacheMisses(w, period))
+	case "branchInstructions":
+		err = pprof.StartCPUProfileWithConfig(pprof.CPUBranchInstructions(w, period))
+	case "branchMisses":
+		err = pprof.StartCPUProfileWithConfig(pprof.CPUBranchMisses(w, period))
+
+	default:
+		// Is this a raw event?
+		if strings.HasPrefix(eventName, "r") {
+			if rawHexEvent, e := strconv.ParseUint(eventName[1:], 16, 64); e == nil {
+				err = pprof.StartCPUProfileWithConfig(pprof.CPURawEvent(w, period, rawHexEvent))
+			} else {
+				err = fmt.Errorf("Incorrect hex format for raw event")
+			}
+		} else {
+			err = fmt.Errorf("Unknown or not yet implemented event")
+		}
+	}
+	if err != nil {
 		serveError(w, http.StatusInternalServerError,
 			fmt.Sprintf("Could not enable CPU profiling: %s", err))
 		return
 	}
+
 	sleep(w, time.Duration(sec)*time.Second)
 	pprof.StopCPUProfile()
 }
