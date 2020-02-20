@@ -11,4 +11,5 @@ const (
 	_SIG_SETMASK = 3
 	_NSIG        = 33
 	_SI_USER     = 0
+	_POLL_IN     = 1
 )

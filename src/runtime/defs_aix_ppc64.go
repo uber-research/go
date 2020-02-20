@@ -89,6 +89,8 @@ const (
 	_SIG_UNBLOCK = 0x1
 	_SIG_SETMASK = 0x2
 
+	_POLL_IN     = 0xdeadbeef // only for compilation
+
 	_SA_SIGINFO = 0x100
 	_SA_RESTART = 0x8
 	_SA_ONSTACK = 0x1

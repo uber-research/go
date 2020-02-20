@@ -489,53 +489,55 @@ type m struct {
 	divmod  uint32 // div/mod denominator for arm - known to liblink
 
 	// Fields not known to debuggers.
-	procid        uint64       // for debuggers, but offset not hard-coded
-	gsignal       *g           // signal-handling g
-	goSigStack    gsignalStack // Go-allocated signal handling stack
-	sigmask       sigset       // storage for saved signal mask
-	tls           [6]uintptr   // thread-local storage (for x86 extern register)
-	mstartfn      func()
-	curg          *g       // current running goroutine
-	caughtsig     guintptr // goroutine running during fatal signal
-	p             puintptr // attached p for executing go code (nil if not executing go code)
-	nextp         puintptr
-	oldp          puintptr // the p that was attached before executing a syscall
-	id            int64
-	mallocing     int32
-	throwing      int32
-	preemptoff    string // if != "", keep curg running on this m
-	locks         int32
-	dying         int32
-	profilehz     int32
-	spinning      bool // m is out of work and is actively looking for work
-	blocked       bool // m is blocked on a note
-	newSigstack   bool // minit on C thread called sigaltstack
-	printlock     int8
-	incgo         bool   // m is executing a cgo call
-	freeWait      uint32 // if == 0, safe to free g0 and delete m (atomic)
-	fastrand      [2]uint32
-	needextram    bool
-	traceback     uint8
-	ncgocall      uint64      // number of cgo calls in total
-	ncgo          int32       // number of cgo calls currently in progress
-	cgoCallersUse uint32      // if non-zero, cgoCallers in use temporarily
-	cgoCallers    *cgoCallers // cgo traceback if crashing in cgo call
-	doesPark      bool        // non-P running threads: sysmon and newmHandoff never use .park
-	park          note
-	alllink       *m // on allm
-	schedlink     muintptr
-	lockedg       guintptr
-	createstack   [32]uintptr // stack that created this thread.
-	lockedExt     uint32      // tracking for external LockOSThread
-	lockedInt     uint32      // tracking for internal lockOSThread
-	nextwaitm     muintptr    // next m waiting for lock
-	waitunlockf   func(*g, unsafe.Pointer) bool
-	waitlock      unsafe.Pointer
-	waittraceev   byte
-	waittraceskip int
-	startingtrace bool
-	syscalltick   uint32
-	freelink      *m // on sched.freem
+	procid           uint64       // for debuggers, but offset not hard-coded
+	gsignal          *g           // signal-handling g
+	goSigStack       gsignalStack // Go-allocated signal handling stack
+	sigmask          sigset       // storage for saved signal mask
+	tls              [6]uintptr   // thread-local storage (for x86 extern register)
+	mstartfn         func()
+	curg             *g       // current running goroutine
+	caughtsig        guintptr // goroutine running during fatal signal
+	p                puintptr // attached p for executing go code (nil if not executing go code)
+	nextp            puintptr
+	oldp             puintptr // the p that was attached before executing a syscall
+	id               int64
+	mallocing        int32
+	throwing         int32
+	preemptoff       string // if != "", keep curg running on this m
+	locks            int32
+	dying            int32
+	profileSetup     int32                                  // About to take siglock
+	profConfig       [_CPUPROF_EVENTS_MAX]*cpuProfileConfig // holds a snapshot of the config used to start CPU profiles
+	cpuProfileHandle [_CPUPROF_EVENTS_MAX]unsafe.Pointer    // holds OS-specific resources opened by CPU profiling
+	spinning         bool                                   // m is out of work and is actively looking for work
+	blocked          bool                                   // m is blocked on a note
+	newSigstack      bool                                   // minit on C thread called sigaltstack
+	printlock        int8
+	incgo            bool   // m is executing a cgo call
+	freeWait         uint32 // if == 0, safe to free g0 and delete m (atomic)
+	fastrand         [2]uint32
+	needextram       bool
+	traceback        uint8
+	ncgocall         uint64      // number of cgo calls in total
+	ncgo             int32       // number of cgo calls currently in progress
+	cgoCallersUse    uint32      // if non-zero, cgoCallers in use temporarily
+	cgoCallers       *cgoCallers // cgo traceback if crashing in cgo call
+	park             note
+	doesPark         bool // non-P running threads: sysmon and newmHandoff never use .park
+	alllink          *m   // on allm
+	schedlink        muintptr
+	lockedg          guintptr
+	createstack      [32]uintptr // stack that created this thread.
+	lockedExt        uint32      // tracking for external LockOSThread
+	lockedInt        uint32      // tracking for internal lockOSThread
+	nextwaitm        muintptr    // next m waiting for lock
+	waitunlockf      func(*g, unsafe.Pointer) bool
+	waitlock         unsafe.Pointer
+	waittraceev      byte
+	waittraceskip    int
+	startingtrace    bool
+	syscalltick      uint32
+	freelink         *m // on sched.freem
 
 	// mFixup is used to synchronize OS related m state (credentials etc)
 	// use mutex to access.
@@ -789,14 +791,12 @@ type schedt struct {
 
 	// safepointFn should be called on each P at the next GC
 	// safepoint if p.runSafePointFn is set.
-	safePointFn   func(*p)
-	safePointWait int32
-	safePointNote note
-
-	profilehz int32 // cpu profiling rate
-
-	procresizetime int64 // nanotime() of last change to gomaxprocs
-	totaltime      int64 // ∫gomaxprocs dt up to procresizetime
+	safePointFn    func(*p)
+	safePointWait  int32
+	safePointNote  note
+	profConfig     [_CPUPROF_EVENTS_MAX]*cpuProfileConfig // holds the current config for each CPU profile type
+	procresizetime int64                                  // nanotime() of last change to gomaxprocs
+	totaltime      int64                                  // ∫gomaxprocs dt up to procresizetime
 
 	// sysmonlock protects sysmon's actions on the runtime.
 	//
