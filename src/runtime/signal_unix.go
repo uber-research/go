@@ -21,6 +21,8 @@ type sigTabT struct {
 	name  string
 }
 
+var sigprofPMUHandlerFunc func(hasG bool, info *siginfo, c *sigctxt, gp *g, _g_ *g)
+
 //go:linkname os_sigpipe os.sigpipe
 func os_sigpipe() {
 	systemstack(sigpipe)
@@ -262,22 +264,24 @@ func clearSignalHandlers() {
 }
 
 // setProcessCPUProfiler is called when the profiling timer changes.
-// It is called with prof.lock held. hz is the new timer, and is 0 if
-// profiling is being disabled. Enable or disable the signal as
-// required for -buildmode=c-archive.
-func setProcessCPUProfiler(hz int32) {
-	if hz != 0 {
+// It is called with prof.lock held. profConfig.hz is the new timer,
+// If profConfig is nil or profConfig.hz is 0, profiling is being disabled.
+// Enable or disable the signal as required for -buildmode=c-archive.
+func setProcessCPUProfiler(profConfig *cpuProfileConfig) {
+	if profConfig != nil {
 		// Enable the Go signal handler if not enabled.
 		if atomic.Cas(&handlingSig[_SIGPROF], 0, 1) {
 			atomic.Storeuintptr(&fwdSig[_SIGPROF], getsig(_SIGPROF))
 			setsig(_SIGPROF, funcPC(sighandler))
 		}
-
-		var it itimerval
-		it.it_interval.tv_sec = 0
-		it.it_interval.set_usec(1000000 / hz)
-		it.it_value = it.it_interval
-		setitimer(_ITIMER_PROF, &it, nil)
+		/* TODO: since itimer is process-wide this change was recently made, which
+		          does not go well with PMU profiling which is per thread, hence, I am falling back to
+		          starting and stopping itimer on all threads.
+				var it itimerval
+				it.it_interval.tv_sec = 0
+				it.it_interval.set_usec(1000000 / hz)
+				it.it_value = it.it_interval
+				setitimer(_ITIMER_PROF, &it, nil) */
 	} else {
 		// If the Go signal handler should be disabled by default,
 		// switch back to the signal handler that was installed
@@ -299,19 +303,35 @@ func setProcessCPUProfiler(hz int32) {
 				if h == _SIG_DFL {
 					h = _SIG_IGN
 				}
-				setsig(_SIGPROF, h)
+				setsig(_SIGPROF, atomic.Loaduintptr(&fwdSig[_SIGPROF]))
 			}
 		}
 
-		setitimer(_ITIMER_PROF, &itimerval{}, nil)
+		/* TODO: since itimer is process-wide this change was recently made, which
+		          does not go well with PMU profiling which is per thread, hence, I am falling back to
+		          starting and stopping itimer on all threads.
+				setitimer(_ITIMER_PROF, &itimerval{}, nil) */
 	}
 }
 
-// setThreadCPUProfiler makes any thread-specific changes required to
-// implement profiling at a rate of hz.
-// No changes required on Unix systems.
-func setThreadCPUProfiler(hz int32) {
-	getg().m.profilehz = hz
+// setThreadOSTimerProfiler makes any thread-specific changes required to
+// implement profiling at a rate of profConfig.hz.
+// profConfig==nil or profConfig.hz = 0 leads to stopping profiling.
+func setThreadOSTimerProfiler(profConfig *cpuProfileConfig) {
+	var it itimerval
+	if profConfig == nil || profConfig.hz == 0 {
+		setitimer(_ITIMER_PROF, &it, nil)
+	} else {
+		it.it_interval.tv_sec = 0
+		it.it_interval.set_usec(1000000 / int32(profConfig.hz))
+		it.it_value = it.it_interval
+		// TODO: settimer is not guaranteed to deliver the signal to the eventing thread.
+		// The correct way is to use timer_create(CLOCK_THREAD_CPUTIME_ID, ...) by setting sigev_notify = SIGEV_THREAD_ID
+		// and sigev_notify_thread_id = syscall(SYS_gettid). But timer_create is available only on Linux-based systems.
+		setitimer(_ITIMER_PROF, &it, nil)
+	}
+	_g_ := getg()
+	_g_.m.profConfig[_CPUPROF_OS_TIMER] = profConfig
 }
 
 func sigpipe() {
@@ -421,7 +441,12 @@ func sigtrampgo(sig uint32, info *siginfo, ctx unsafe.Pointer) {
 	setg(g)
 	if g == nil {
 		if sig == _SIGPROF {
-			sigprofNonGoPC(c.sigpc())
+			if sigprofPMUHandlerFunc != nil && c.sigcode() == _POLL_IN { // perf_event_open is configured to deliver POLL_IN
+				sigprofPMUHandlerFunc(false, info, (*sigctxt)(noescape(unsafe.Pointer(c))), nil, nil)
+			} else {
+				// ITIMER delivers either _SI_KERNEL or _SI_TIMER but we never check that
+				sigprofNonGoPC(c.sigpc(), _CPUPROF_OS_TIMER)
+			}
 			return
 		}
 		if sig == sigPreempt && preemptMSupported && debug.asyncpreemptoff == 0 {
@@ -538,7 +563,12 @@ func sighandler(sig uint32, info *siginfo, ctxt unsafe.Pointer, gp *g) {
 	c := &sigctxt{info, ctxt}
 
 	if sig == _SIGPROF {
-		sigprof(c.sigpc(), c.sigsp(), c.siglr(), gp, _g_.m)
+		if sigprofPMUHandlerFunc != nil && c.sigcode() == _POLL_IN { // perf_event_open is configured to deliver POLL_IN
+			sigprofPMUHandlerFunc(true, info, (*sigctxt)(noescape(unsafe.Pointer(c))), gp, _g_)
+		} else {
+			// ITIMER delivers either _SI_KERNEL or _SI_TIMER
+			sigprof(c.sigpc(), c.sigsp(), c.siglr(), gp, _g_.m, _CPUPROF_OS_TIMER)
+		}
 		return
 	}
 

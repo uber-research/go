@@ -13,6 +13,7 @@ const (
 	_SS_DISABLE  = 2
 	_NSIG        = 65
 	_SI_USER     = 0
+	_POLL_IN     = 1
 	_SIG_BLOCK   = 0
 	_SIG_UNBLOCK = 1
 	_SIG_SETMASK = 2
