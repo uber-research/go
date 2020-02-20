@@ -483,3 +483,6 @@ func tgkill(tgid, tid, sig int)
 func signalM(mp *m, sig int) {
 	tgkill(getpid(), int(mp.procid), sig)
 }
+
+//go:noescape
+func fcntl(fd, cmd int32, arg uintptr) int32

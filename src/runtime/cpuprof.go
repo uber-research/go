@@ -20,6 +20,71 @@ import (
 
 const maxCPUProfStack = 64
 
+//go:linkname cpuEvent runtime/pprof.cpuEvent
+type cpuEvent int32
+
+const (
+	_CPUPROF_OS_TIMER, _CPUPROF_FIRST_EVENT cpuEvent = iota, iota
+	_CPUPROF_HW_CPU_CYCLES, _CPUPROF_FIRST_PMU_EVENT
+	_CPUPROF_HW_INSTRUCTIONS cpuEvent = iota
+	_CPUPROF_HW_CACHE_REFERENCES
+	_CPUPROF_HW_CACHE_MISSES
+	_CPUPROF_HW_BRANCH_INSTRUCTIONS
+	_CPUPROF_HW_BRANCH_MISSES
+	_CPUPROF_HW_RAW
+	_CPUPROF_EVENTS_MAX
+	_CPUPROF_LAST_EVENT cpuEvent = _CPUPROF_EVENTS_MAX - 1
+)
+
+//go:linkname profilePCPrecision runtime/pprof.profilePCPrecision
+type profilePCPrecision uint8
+
+const (
+	_CPUPROF_IP_ARBITRARY_SKID profilePCPrecision = iota
+	_CPUPROF_IP_CONSTANT_SKID
+	_CPUPROF_IP_SUGGEST_NO_SKID
+	_CPUPROF_IP_NO_SKID
+)
+
+// cpuProfileConfig holds different settings under which CPU samples can be produced.
+// Not all fields are in use yet.
+// hz defines the rate of sampling (used only for OS timer-based sampling).
+// period is complementory to hz. The period defines the interval (the number of events that elase) between generating two sampling interrupts.
+// rawEvent is an opaque number that is passed down to CPU to specify what event to sample.
+// The raw event is CPU vendor and version specific.
+// preciseIP is one of the following value:
+//    CPUPROF_IP_ARBITRARY_SKID: no skid constaint from when the sample occurs to when the interrupt is generated,
+//    CPUPROF_IP_CONSTANT_SKID: a constant skid between a sample and the corresponding interrupt,
+//    CPUPROF_IP_SUGGEST_NO_SKID: request zero skid between a sample and the corresponding interrupt, but no guarantee,
+//    CPUPROF_IP_NO_SKID: demand no skid between a sample and the corresponding interrupt.
+// isSampleIPIncluded: include the instuction pointer that caused the sample to occur.
+// isSampleThreadIDIncluded: include the thread id in the sample.
+// isSampleAddrIncluded: include the memory address accessed at the time of generating the sample.
+// isKernelIncluded: count the events in the kernel mode.
+// isHvIncluded: count the events in the hypervisor mode.
+// isHvIncluded: include the kernel call chain at the time of the sample.
+// isIdleIncluded: count when the CPU is running the idle task.
+// isSampleCallchainIncluded: include the entire call chain seen at the time of the sample.
+// isCallchainKernelIncluded: include the kernel call chain seen at the time of the sample.
+// isCallchainUserIncluded: include the user call chain seen at the time of the sample.
+//
+//go:linkname cpuProfileConfig runtime/pprof.cpuProfileConfig
+type cpuProfileConfig struct {
+	hz                        uint64
+	period                    uint64
+	rawEvent                  uint64
+	preciseIP                 profilePCPrecision
+	isSampleIPIncluded        bool
+	isSampleThreadIDIncluded  bool
+	isSampleAddrIncluded      bool
+	isKernelIncluded          bool
+	isHvIncluded              bool
+	isIdleIncluded            bool
+	isSampleCallchainIncluded bool
+	isCallchainKernelIncluded bool
+	isCallchainUserIncluded   bool
+}
+
 type cpuProfile struct {
 	lock mutex
 	on   bool     // profiling is on
