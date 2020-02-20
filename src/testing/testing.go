@@ -290,6 +290,8 @@ func Init() {
 	memProfile = flag.String("test.memprofile", "", "write an allocation profile to `file`")
 	memProfileRate = flag.Int("test.memprofilerate", 0, "set memory allocation profiling `rate` (see runtime.MemProfileRate)")
 	cpuProfile = flag.String("test.cpuprofile", "", "write a cpu profile to `file`")
+	cpuProfileEvent = flag.String("test.cpuprofileevent", "timer", "select an event from: timer, cycles, instructions, cacheReferences, cacheMisses, cacheLLReadAccesses, cacheLLReadMisses, r<mask><hw event>")
+	cpuProfilePeriod = flag.Int64("test.cpuprofileperiod", 10000000, "specify the sampling period (aka interval) for a hardware event (timer defaults to 100 Hz)")
 	blockProfile = flag.String("test.blockprofile", "", "write a goroutine blocking profile to `file`")
 	blockProfileRate = flag.Int("test.blockprofilerate", 1, "set blocking profile `rate` (see runtime.SetBlockProfileRate)")
 	mutexProfile = flag.String("test.mutexprofile", "", "write a mutex contention profile to the named file after execution")
@@ -316,6 +318,8 @@ var (
 	memProfile           *string
 	memProfileRate       *int
 	cpuProfile           *string
+	cpuProfileEvent      *string
+	cpuProfilePeriod     *int64
 	blockProfile         *string
 	blockProfileRate     *int
 	mutexProfile         *string
@@ -1244,8 +1248,10 @@ var errMain = errors.New("testing: unexpected use of func Main")
 
 type matchStringOnly func(pat, str string) (bool, error)
 
-func (f matchStringOnly) MatchString(pat, str string) (bool, error)   { return f(pat, str) }
-func (f matchStringOnly) StartCPUProfile(w io.Writer) error           { return errMain }
+func (f matchStringOnly) MatchString(pat, str string) (bool, error) { return f(pat, str) }
+func (f matchStringOnly) StartCPUProfile(w io.Writer, event string, period int64) error {
+	return errMain
+}
 func (f matchStringOnly) StopCPUProfile()                             {}
 func (f matchStringOnly) WriteProfileTo(string, io.Writer, int) error { return errMain }
 func (f matchStringOnly) ImportPath() string                          { return "" }
@@ -1279,6 +1285,11 @@ type M struct {
 	exitCode int
 }
 
+type cpuProfilingOpts struct {
+	event  string
+	period int64
+}
+
 // testDeps is an internal interface of functionality that is
 // passed into this package by a test's generated main package.
 // The canonical implementation of this interface is
@@ -1286,7 +1297,7 @@ type M struct {
 type testDeps interface {
 	ImportPath() string
 	MatchString(pat, str string) (bool, error)
-	StartCPUProfile(io.Writer) error
+	StartCPUProfile(io.Writer, string, int64) error
 	StopCPUProfile()
 	StartTestLog(io.Writer)
 	StopTestLog() error
@@ -1461,7 +1472,7 @@ func (m *M) before() {
 			fmt.Fprintf(os.Stderr, "testing: %s\n", err)
 			return
 		}
-		if err := m.deps.StartCPUProfile(f); err != nil {
+		if err := m.deps.StartCPUProfile(f, *cpuProfileEvent, *cpuProfilePeriod); err != nil {
 			fmt.Fprintf(os.Stderr, "testing: can't start cpu profile: %s\n", err)
 			f.Close()
 			return
