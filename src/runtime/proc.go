@@ -2028,6 +2028,8 @@ func gcstopm() {
 	stopm()
 }
 
+var setThreadPMUProfilerFunc func(eventId cpuEvent, profConfig *cpuProfileConfig)
+
 // Schedules gp to run on the current M.
 // If inheritTime is true, gp inherits the remaining time in the
 // current time slice. Otherwise, it starts a new time slice.
@@ -2052,10 +2054,22 @@ func execute(gp *g, inheritTime bool) {
 		_g_.m.p.ptr().schedtick++
 	}
 
-	// Check whether the profiler needs to be turned on or off.
-	hz := sched.profilehz
-	if _g_.m.profilehz != hz {
-		setThreadCPUProfiler(hz)
+	//TODO: can optimize this and the next loop over all events by maintaining
+	// a monotonically increasing counter in schedt and M and comparing them.
+
+	// Check whether the timer profiler needs to be turned on or off.
+	if _g_.m.profConfig[_CPUPROF_OS_TIMER] != sched.profConfig[_CPUPROF_OS_TIMER] {
+		setThreadOSTimerProfiler(sched.profConfig[_CPUPROF_OS_TIMER])
+	}
+
+	// Check whether the PMU profilers need to be turned on or off.
+	if setThreadPMUProfilerFunc != nil {
+		profConfig := sched.profConfig
+		for eventId := _CPUPROF_FIRST_PMU_EVENT; eventId < _CPUPROF_EVENTS_MAX; eventId++ {
+			if _g_.m.profConfig[eventId] != profConfig[eventId] {
+				setThreadPMUProfilerFunc(eventId, profConfig[eventId])
+			}
+		}
 	}
 
 	if trace.enabled {
@@ -3746,10 +3760,10 @@ func mcount() int32 {
 	return int32(sched.mnext - sched.nmfreed)
 }
 
-var prof struct {
-	signalLock uint32
-	hz         int32
+var prof [_CPUPROF_EVENTS_MAX]struct {
+	config *cpuProfileConfig
 }
+var signalLock uint32
 
 func _System()                    { _System() }
 func _ExternalCode()              { _ExternalCode() }
@@ -3758,37 +3772,8 @@ func _GC()                        { _GC() }
 func _LostSIGPROFDuringAtomic64() { _LostSIGPROFDuringAtomic64() }
 func _VDSO()                      { _VDSO() }
 
-// Called if we receive a SIGPROF signal.
-// Called by the signal handler, may run during STW.
-//go:nowritebarrierrec
-func sigprof(pc, sp, lr uintptr, gp *g, mp *m) {
-	if prof.hz == 0 {
-		return
-	}
-
-	// On mips{,le}, 64bit atomics are emulated with spinlocks, in
-	// runtime/internal/atomic. If SIGPROF arrives while the program is inside
-	// the critical section, it creates a deadlock (when writing the sample).
-	// As a workaround, create a counter of SIGPROFs while in critical section
-	// to store the count, and pass it to sigprof.add() later when SIGPROF is
-	// received from somewhere else (with _LostSIGPROFDuringAtomic64 as pc).
-	if GOARCH == "mips" || GOARCH == "mipsle" || GOARCH == "arm" {
-		if f := findfunc(pc); f.valid() {
-			if hasPrefix(funcname(f), "runtime/internal/atomic") {
-				cpuprof.lostAtomic++
-				return
-			}
-		}
-	}
-
-	// Profiling runs concurrently with GC, so it must not allocate.
-	// Set a trap in case the code does allocate.
-	// Note that on windows, one thread takes profiles of all the
-	// other threads, so mp is usually not getg().m.
-	// In fact mp may not even be stopped.
-	// See golang.org/issue/17165.
-	getg().m.mallocing++
-
+//go:nosplit
+func stackUnwinding(pc, sp, lr uintptr, gp *g, mp *m, stk []uintptr) int {
 	// Define that a "user g" is a user-created goroutine, and a "system g"
 	// is one that is m->g0 or m->gsignal.
 	//
@@ -3858,7 +3843,6 @@ func sigprof(pc, sp, lr uintptr, gp *g, mp *m) {
 	if gp == nil || sp < gp.stack.lo || gp.stack.hi < sp || setsSP(pc) || (mp != nil && mp.vdsoSP != 0) {
 		traceback = false
 	}
-	var stk [maxCPUProfStack]uintptr
 	n := 0
 	if mp.ncgo > 0 && mp.curg != nil && mp.curg.syscallpc != 0 && mp.curg.syscallsp != 0 {
 		cgoOff := 0
@@ -3913,9 +3897,40 @@ func sigprof(pc, sp, lr uintptr, gp *g, mp *m) {
 			}
 		}
 	}
+	return n
+}
 
-	if prof.hz != 0 {
-		cpuprof.add(gp, stk[:n])
+// Counts SIGPROFs received while in atomic64 critical section, on mips{,le}
+var lostAtomic64Count [_CPUPROF_EVENTS_MAX]uint64
+
+// Called if we receive a SIGPROF signal and prof is enabled.
+// Called by the signal handler, may run during STW.
+//go:nowritebarrierrec
+func sigprof(pc, sp, lr uintptr, gp *g, mp *m, eventId cpuEvent) {
+	if prof[eventId].config == nil {
+		return
+	}
+	if GOARCH == "mips" || GOARCH == "mipsle" || GOARCH == "arm" {
+		if f := findfunc(pc); f.valid() {
+			if hasPrefix(funcname(f), "runtime/internal/atomic") {
+				cpuprof[eventId].lostAtomic++
+				return
+			}
+		}
+	}
+
+	// setting up another profile event, drop this sample since it needs to
+	// take the same signalLock.
+
+	if getg().m.profileSetup == 1 {
+		return
+	}
+
+	getg().m.mallocing++
+	var stk [maxCPUProfStack]uintptr
+	n := stackUnwinding(pc, sp, lr, gp, mp, stk[:])
+	if prof[eventId].config != nil {
+		cpuprof[eventId].add(gp, stk[:n], eventId)
 	}
 	getg().m.mallocing--
 }
@@ -3932,13 +3947,13 @@ var sigprofCallersUse uint32
 // g is nil, and what we can do is very limited.
 //go:nosplit
 //go:nowritebarrierrec
-func sigprofNonGo() {
-	if prof.hz != 0 {
+func sigprofNonGo(eventId cpuEvent) {
+	if prof[eventId].config != nil {
 		n := 0
 		for n < len(sigprofCallers) && sigprofCallers[n] != 0 {
 			n++
 		}
-		cpuprof.addNonGo(sigprofCallers[:n])
+		cpuprof[eventId].addNonGo(sigprofCallers[:n], eventId)
 	}
 
 	atomic.Store(&sigprofCallersUse, 0)
@@ -3949,13 +3964,13 @@ func sigprofNonGo() {
 // g is nil, and what we can do is very limited.
 //go:nosplit
 //go:nowritebarrierrec
-func sigprofNonGoPC(pc uintptr) {
-	if prof.hz != 0 {
+func sigprofNonGoPC(pc uintptr, eventId cpuEvent) {
+	if prof[eventId].config != nil {
 		stk := []uintptr{
 			pc,
 			funcPC(_ExternalCode) + sys.PCQuantum,
 		}
-		cpuprof.addNonGo(stk)
+		cpuprof[eventId].addNonGo(stk, eventId)
 	}
 }
 
@@ -3983,12 +3998,14 @@ func setsSP(pc uintptr) bool {
 	return false
 }
 
-// setcpuprofilerate sets the CPU profiling rate to hz times per second.
-// If hz <= 0, setcpuprofilerate turns off CPU profiling.
-func setcpuprofilerate(hz int32) {
-	// Force sane arguments.
-	if hz < 0 {
-		hz = 0
+// Note that profConfig is created by runtim_pprof_setCPUProfileConfig() and its fields are unmodified.
+// Hence pointer copies and comparisons inside the runtime are ok.
+func setcpuprofileconfig(eventId cpuEvent, profConfig *cpuProfileConfig) {
+	// cannot take any PMU profiling on systems that have not registered their setThreadPMUProfilerFunc.
+	// setThreadPMUProfilerFunc is a write once variable.
+	// Hence, there cannot be any race from checking non-nil to invoking them.
+	if (eventId != _CPUPROF_OS_TIMER) && (setThreadPMUProfilerFunc == nil) {
+		return
 	}
 
 	// Disable preemption, otherwise we can be rescheduled to another thread
@@ -3996,28 +4013,52 @@ func setcpuprofilerate(hz int32) {
 	_g_ := getg()
 	_g_.m.locks++
 
-	// Stop profiler on this thread so that it is safe to lock prof.
-	// if a profiling signal came in while we had prof locked,
+	// Stop profiler on this thread so that it is safe to lock prof[eventId].
+	// if a profiling signal came in while we had prof[eventId] locked,
 	// it would deadlock.
-	setThreadCPUProfiler(0)
+	if eventId == _CPUPROF_OS_TIMER {
+		setThreadOSTimerProfiler(nil)
+	} else {
+		setThreadPMUProfilerFunc(eventId, nil)
+	}
 
-	for !atomic.Cas(&prof.signalLock, 0, 1) {
+	_g_.m.profileSetup = 1
+	for !atomic.Cas(&signalLock, 0, 1) {
 		osyield()
 	}
-	if prof.hz != hz {
-		setProcessCPUProfiler(hz)
-		prof.hz = hz
+
+	if prof[eventId].config != profConfig {
+		if profConfig == nil {
+			// Restore SIGPROF only if all events are stopped
+			eventsRunning := false
+			for i := _CPUPROF_FIRST_EVENT; i < _CPUPROF_EVENTS_MAX; i++ {
+				if prof[eventId].config != nil {
+					eventsRunning = true
+					break
+				}
+			}
+			if eventsRunning == false {
+				setProcessCPUProfiler(nil)
+			}
+		} else {
+			setProcessCPUProfiler(profConfig)
+		}
+		prof[eventId].config = profConfig
 	}
-	atomic.Store(&prof.signalLock, 0)
+	atomic.Store(&signalLock, 0)
+	_g_.m.profileSetup = 0
 
 	lock(&sched.lock)
-	sched.profilehz = hz
+	sched.profConfig[eventId] = profConfig
 	unlock(&sched.lock)
 
-	if hz != 0 {
-		setThreadCPUProfiler(hz)
+	if profConfig != nil {
+		if eventId == _CPUPROF_OS_TIMER {
+			setThreadOSTimerProfiler(profConfig)
+		} else {
+			setThreadPMUProfilerFunc(eventId, profConfig)
+		}
 	}
-
 	_g_.m.locks--
 }
 

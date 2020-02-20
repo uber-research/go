@@ -155,12 +155,12 @@ func sigdisable(sig uint32) {
 func sigignore(sig uint32) {
 }
 
-func setProcessCPUProfiler(hz int32) {
+func setProcessCPUProfiler(profConfig *cpuProfileConfig) {
 }
 
-func setThreadCPUProfiler(hz int32) {
+func setThreadOSTimerProfiler(profConfig *cpuProfileConfig) {
 	// TODO: Enable profiling interrupts.
-	getg().m.profilehz = hz
+	getg().m.profConfig[_CPUPROF_OS_TIMER] = profConfig
 }
 
 // gsignalStack is unused on Plan 9.

@@ -5743,18 +5743,28 @@ pkg runtime, type TypeAssertionError struct
 pkg runtime, var MemProfileRate int
 pkg runtime/debug, func PrintStack()
 pkg runtime/debug, func Stack() []uint8
+pkg runtime/pprof, func CPUBranchInstructions(io.Writer, uint64) ProfilingOption
+pkg runtime/pprof, func CPUBranchMisses(io.Writer, uint64) ProfilingOption
+pkg runtime/pprof, func CPUCacheMisses(io.Writer, uint64) ProfilingOption
+pkg runtime/pprof, func CPUCacheReferences(io.Writer, uint64) ProfilingOption
+pkg runtime/pprof, func CPUCycles(io.Writer, uint64) ProfilingOption
+pkg runtime/pprof, func CPUInstructions(io.Writer, uint64) ProfilingOption
+pkg runtime/pprof, func CPURawEvent(io.Writer, uint64, uint64) ProfilingOption
 pkg runtime/pprof, func Lookup(string) *Profile
 pkg runtime/pprof, func NewProfile(string) *Profile
+pkg runtime/pprof, func OSTimer(io.Writer) ProfilingOption
 pkg runtime/pprof, func Profiles() []*Profile
 pkg runtime/pprof, func StartCPUProfile(io.Writer) error
 pkg runtime/pprof, func StopCPUProfile()
 pkg runtime/pprof, func WriteHeapProfile(io.Writer) error
+pkg runtime/pprof, func StartCPUProfileWithConfig(ProfilingOption, ...ProfilingOption) error
 pkg runtime/pprof, method (*Profile) Add(interface{}, int)
 pkg runtime/pprof, method (*Profile) Count() int
 pkg runtime/pprof, method (*Profile) Name() string
 pkg runtime/pprof, method (*Profile) Remove(interface{})
 pkg runtime/pprof, method (*Profile) WriteTo(io.Writer, int) error
 pkg runtime/pprof, type Profile struct
+pkg runtime/pprof, type ProfilingOption interface, unexported methods
 pkg sort, func Float64s([]float64)
 pkg sort, func Float64sAreSorted([]float64) bool
 pkg sort, func Ints([]int)

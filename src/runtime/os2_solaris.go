@@ -10,4 +10,5 @@ const (
 	_SIG_SETMASK = 3
 	_NSIG        = 73 /* number of signals in sigtable array */
 	_SI_USER     = 0
+	_POLL_IN     = 0xdeadbeef // cannot find the code and PMU profiling is not enabled on Solaris.
 )

@@ -917,7 +917,7 @@ func stdcall(fn stdFunction) uintptr {
 	mp := gp.m
 	mp.libcall.fn = uintptr(unsafe.Pointer(fn))
 	resetLibcall := false
-	if mp.profilehz != 0 && mp.libcallsp == 0 {
+	if mp.profConfig[_CPUPROF_OS_TIMER] != nil && mp.profConfig[_CPUPROF_OS_TIMER].hz != 0 && mp.libcallsp == 0 {
 		// leave pc/sp for cpu profiler
 		mp.libcallg.set(gp)
 		mp.libcallpc = getcallerpc()
@@ -1054,7 +1054,7 @@ func profilem(mp *m, thread uintptr) {
 
 	gp := gFromTLS(mp)
 
-	sigprof(r.ip(), r.sp(), r.lr(), gp, mp)
+	sigprof(r.ip(), r.sp(), r.lr(), gp, mp, _CPUPROF_OS_TIMER)
 }
 
 func gFromTLS(mp *m) *g {
@@ -1081,7 +1081,7 @@ func profileloop1(param uintptr) uint32 {
 			// Do not profile threads blocked on Notes,
 			// this includes idle worker threads,
 			// idle timer thread, idle heap scavenger, etc.
-			if mp.thread == 0 || mp.profilehz == 0 || mp.blocked {
+			if mp.thread == 0 || mp.profConfig[_CPUPROF_OS_TIMER] == nil || mp.profConfig[_CPUPROF_OS_TIMER].hz == 0 || mp.blocked {
 				unlock(&mp.threadLock)
 				continue
 			}
@@ -1098,7 +1098,7 @@ func profileloop1(param uintptr) uint32 {
 				stdcall1(_CloseHandle, thread)
 				continue
 			}
-			if mp.profilehz != 0 && !mp.blocked {
+			if mp.profConfig[_CPUPROF_OS_TIMER] != nil && mp.profConfig[_CPUPROF_OS_TIMER].hz != 0 && !mp.blocked {
 				// Pass the thread handle in case mp
 				// was in the process of shutting down.
 				profilem(mp, thread)
@@ -1109,7 +1109,7 @@ func profileloop1(param uintptr) uint32 {
 	}
 }
 
-func setProcessCPUProfiler(hz int32) {
+func setProcessCPUProfiler(profConfig *cpuProfileConfig) {
 	if profiletimer == 0 {
 		timer := stdcall3(_CreateWaitableTimerA, 0, 0, 0)
 		atomic.Storeuintptr(&profiletimer, timer)
@@ -1119,7 +1119,13 @@ func setProcessCPUProfiler(hz int32) {
 	}
 }
 
-func setThreadCPUProfiler(hz int32) {
+func setThreadOSTimerProfiler(profConfig *cpuProfileConfig) {
+	var hz int32
+	if profConfig == nil {
+		hz = 0
+	} else {
+		hz = int32(profConfig.hz)
+	}
 	ms := int32(0)
 	due := ^int64(^uint64(1 << 63))
 	if hz > 0 {
@@ -1130,7 +1136,7 @@ func setThreadCPUProfiler(hz int32) {
 		due = int64(ms) * -10000
 	}
 	stdcall6(_SetWaitableTimer, profiletimer, uintptr(unsafe.Pointer(&due)), uintptr(ms), 0, 0, 0)
-	atomic.Store((*uint32)(unsafe.Pointer(&getg().m.profilehz)), uint32(hz))
+	atomic.Storeuintptr((*uintptr)(unsafe.Pointer(&getg().m.profConfig[_CPUPROF_OS_TIMER])), uintptr(unsafe.Pointer(profConfig)))
 }
 
 const preemptMSupported = GOARCH != "arm"

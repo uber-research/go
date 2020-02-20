@@ -297,6 +297,44 @@ func testCPUProfile(t *testing.T, matches matchFunc, need []string, avoid []stri
 	if os.Getenv("IN_QEMU") == "1" {
 		t.Skip("ignore the failure in QEMU; see golang.org/issue/9605")
 	}
+
+	// Additionally run tests under hardware-based profiler if available
+	if runtime.GOOS != "linux" {
+		t.FailNow()
+		return nil
+	}
+	if runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64" && runtime.GOARCH != "386" {
+		t.FailNow()
+		return nil
+	}
+
+	//is it in a VM?
+	out, err := exec.Command("lscpu").CombinedOutput() // Linux only
+	if err != nil {
+		t.FailNow()
+		return nil
+	}
+	if strings.Contains(string(out), "Hypervisor") {
+		t.FailNow()
+		return nil
+	}
+	for duration <= maxDuration {
+		var prof bytes.Buffer
+		if err := StartCPUProfileWithConfig(CPUCycles(&prof, 1000000)); err != nil {
+			t.Fatal(err)
+		}
+		f(duration)
+		StopCPUProfile()
+
+		if p, ok := profileOk(t, matches, need, avoid, prof, duration); ok {
+			return p
+		}
+
+		duration *= 2
+		if duration <= maxDuration {
+			t.Logf("retrying with %s duration", duration)
+		}
+	}
 	t.FailNow()
 	return nil
 }

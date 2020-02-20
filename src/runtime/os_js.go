@@ -116,11 +116,11 @@ func newosproc(mp *m) {
 	panic("newosproc: not implemented")
 }
 
-func setProcessCPUProfiler(hz int32) {}
-func setThreadCPUProfiler(hz int32)  {}
-func sigdisable(uint32)              {}
-func sigenable(uint32)               {}
-func sigignore(uint32)               {}
+func setProcessCPUProfiler(profConfig *cpuProfileConfig) {}
+func setThreadOSTimerProfiler(profConfig *cpuProfileConfig)  {}
+func sigdisable(uint32)                                  {}
+func sigenable(uint32)                                   {}
+func sigignore(uint32)                                   {}
 
 //go:linkname os_sigpipe os.sigpipe
 func os_sigpipe() {

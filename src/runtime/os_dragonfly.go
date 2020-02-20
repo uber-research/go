@@ -12,6 +12,7 @@ import (
 const (
 	_NSIG        = 33
 	_SI_USER     = 0
+	_POLL_IN     = 1
 	_SS_DISABLE  = 4
 	_SIG_BLOCK   = 1
 	_SIG_UNBLOCK = 2
