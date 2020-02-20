@@ -2704,6 +2704,23 @@
 // 	    Write a CPU profile to the specified file before exiting.
 // 	    Writes test binary as -c would.
 //
+// 	-cpuprofileevent event
+// 	    Specify which event to sample. An event is a source of sampling.
+// 	    To sample via OS timer, use -test.cpuprofileevent=timer. (default)
+// 	    To sample via hardware cycles, use -test.cpuprofileevent=cycles.
+// 	    To sample via hardware instructions, use -test.cpuprofileevent=instructions.
+// 	    To sample via hardware cache misses, use -test.cpuprofileevent=cacheMisses.
+// 	    To sample via hardware last-level cache read accesses, use -test.cpuprofileevent=cacheLLReadAccesses.
+// 	    To sample via hardware last-level cache read misses, use -test.cpuprofileevent=cacheLLReadMisses.
+// 	    To sample any hardware-provided event use -test.cpuprofileevent=r<event mask><event id>. Refer to your CPU manufacturer's manaul.
+//
+// 	-cpuprofileperiod n
+// 	    Set the sampling period for the hardware event specified by -cpuprofileevent.
+// 	    A period specifies the number of events elapsed between two samples (aka interval). A larger value means coarser granularity.
+// 	    A smaller value means finer granularity (and potentially higher overhead).
+// 	    Hardware events default to period=1000000. 1M is usually good enough for CPU cycles, other events should be appropriatey set.
+// 	    The OS timer defaults to 100 Hz.
+//
 // 	-memprofile mem.out
 // 	    Write an allocation profile to the file after all tests have passed.
 // 	    Writes test binary as -c would.

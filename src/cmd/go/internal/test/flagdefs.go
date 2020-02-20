@@ -18,6 +18,8 @@ var passFlagToTest = map[string]bool{
 	"coverprofile":         true,
 	"cpu":                  true,
 	"cpuprofile":           true,
+	"cpuprofileevent":      true,
+	"cpuprofileperiod":     true,
 	"failfast":             true,
 	"list":                 true,
 	"memprofile":           true,
