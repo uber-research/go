@@ -23,6 +23,7 @@
 #define SYS_kill		 37
 #define SYS_pipe		 42
 #define SYS_brk			 45
+#define SYS_ioctl		 54
 #define SYS_fcntl		 55
 #define SYS_mmap		 90
 #define SYS_munmap		 91
@@ -47,6 +48,7 @@
 #define SYS_tgkill		250
 #define SYS_epoll_create1	315
 #define SYS_pipe2		317
+#define SYS_perf_event_open	319
 
 TEXT runtime·exit(SB),NOSPLIT|NOFRAME,$0-4
 	MOVW	code+0(FP), R3
@@ -706,4 +708,33 @@ TEXT runtime·connect(SB),$0-28
 TEXT runtime·socket(SB),$0-20
 	MOVD	R0, 0(R0) // unimplemented, only needed for android; declared in stubs_linux.go
 	MOVW	R0, ret+16(FP) // for vet
+	RET
+
+// func perfEventOpen(attr *perfEventAttr, pid uintptr, cpu, groupFd int32, flags uintptr) int32
+TEXT runtime·perfEventOpen(SB),NOSPLIT,$0-36
+	MOVD	attr+0(FP), R3
+	MOVD	pid+8(FP), R4
+	MOVW	cpu+16(FP), R5
+	MOVW	groupFd+20(FP), R6
+	MOVD	flags+24(FP), R7
+	SYSCALL $SYS_perf_event_open
+	MOVW	R3, ret+32(FP)
+	RET
+
+// func ioctl(fd, req int32, arg uintptr) int32
+TEXT runtime·ioctl(SB),NOSPLIT,$0-20
+	MOVW	fd+0(FP), R3
+	MOVW	req+4(FP), R4
+	MOVD	arg+8(FP), R5
+	SYSCALL $SYS_ioctl
+	MOVW	R3, ret+16(FP)
+	RET
+
+// func fcntl(fd, cmd int32, arg uintptr) int32
+TEXT runtime·fcntl(SB),NOSPLIT,$0-20
+	MOVW	fd+0(FP), R3
+	MOVW	cmd+4(FP), R4
+	MOVD	arg+8(FP), R5
+	SYSCALL $SYS_fcntl
+	MOVW	R3, ret+16(FP)
 	RET

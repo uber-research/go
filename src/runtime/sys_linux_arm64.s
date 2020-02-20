@@ -22,6 +22,7 @@
 #define SYS_close		57
 #define SYS_pipe2		59
 #define SYS_fcntl		25
+#define SYS_ioctl       	29
 #define SYS_nanosleep		101
 #define SYS_mmap		222
 #define SYS_munmap		215
@@ -49,6 +50,7 @@
 #define SYS_socket		198
 #define SYS_connect		203
 #define SYS_brk			214
+#define SYS_perf_event_open	241
 
 TEXT runtime·exit(SB),NOSPLIT|NOFRAME,$0-4
 	MOVW	code+0(FP), R0
@@ -764,4 +766,35 @@ TEXT runtime·sbrk0(SB),NOSPLIT,$0-8
 	RET
 
 TEXT runtime·sigreturn(SB),NOSPLIT,$0-0
+	RET
+// func perfEventOpen(attr *perfEventAttr, pid uintptr, cpu, groupFd int32, flags uintptr) int32
+TEXT runtime·perfEventOpen(SB),NOSPLIT,$0-36
+	MOVD	attr+0(FP), R0
+	MOVD	pid+8(FP), R1
+	MOVW	cpu+16(FP), R2
+	MOVW	groupFd+20(FP), R3
+	MOVD	flags+24(FP), R4
+	MOVD	$SYS_perf_event_open, R8
+	SVC
+	MOVW	R0, ret+32(FP)
+	RET
+
+// func ioctl(fd, req int32, arg uintptr) int32
+TEXT runtime·ioctl(SB),NOSPLIT,$0-20
+	MOVW	fd+0(FP), R0
+	MOVW	req+4(FP), R1
+	MOVD	arg+8(FP), R2
+	MOVD	$SYS_ioctl, R8
+	SVC
+	MOVW	R0, ret+16(FP)
+	RET
+
+// func fcntl(fd, cmd int32, arg uintptr) int32
+TEXT runtime·fcntl(SB),NOSPLIT,$0-20
+	MOVW	fd+0(FP), R0
+	MOVW	cmd+4(FP), R1
+	MOVD	arg+8(FP), R2
+	MOVD	$SYS_fcntl, R8
+	SVC
+	MOVW	R0, ret+16(FP)
 	RET

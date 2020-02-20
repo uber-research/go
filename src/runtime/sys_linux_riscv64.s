@@ -28,6 +28,7 @@
 #define SYS_getrlimit		163
 #define SYS_gettid		178
 #define SYS_gettimeofday	169
+#define SYS_ioctl		29
 #define SYS_kill		129
 #define SYS_madvise		233
 #define SYS_mincore		232
@@ -35,6 +36,7 @@
 #define SYS_munmap		215
 #define SYS_nanosleep		101
 #define SYS_openat		56
+#define SYS_perf_event_open	241
 #define SYS_pipe2		59
 #define SYS_pselect6		72
 #define SYS_read		63
@@ -513,3 +515,37 @@ TEXT runtime·sbrk0(SB),NOSPLIT,$0-8
 	ECALL
 	MOVW	A0, ret+0(FP)
 	RET
+
+// func perfEventOpen(attr *perfEventAttr, pid uintptr, cpu, groupFd int32, flags uintptr) int32
+TEXT runtime·perfEventOpen(SB),NOSPLIT,$0-36
+	MOV    attr+0(FP), A0
+	MOV    pid+8(FP), A1
+	MOVW    cpu+16(FP), A2
+	MOVW    groupFd+20(FP), A3
+	MOV    flags+24(FP), A4
+	MOV    $SYS_perf_event_open, A7
+	ECALL
+	MOVW    A0, ret+32(FP)
+	RET
+
+// func ioctl(fd, req int32, arg uintptr) int32
+TEXT runtime·ioctl(SB),NOSPLIT,$0-20
+	MOVW    fd+0(FP), A0
+	MOVW    req+4(FP), A1
+	MOV    arg+8(FP), A2
+	MOV    $SYS_ioctl, A7
+	ECALL
+	MOVW    A0, ret+16(FP)
+	RET
+
+// func fcntl(fd, cmd int32, arg uintptr) int32
+TEXT runtime·fcntl(SB),NOSPLIT,$0-20
+	MOVW    fd+0(FP), A0
+	MOVW    cmd+4(FP), A1
+	MOV    arg+8(FP), A2
+	MOV    $SYS_fcntl, A7
+	ECALL
+	MOVW    A0, ret+16(FP)
+        RET
+
+
