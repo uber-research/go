@@ -1784,6 +1784,15 @@ TEXT runtime·panicSlice3CU(SB),NOSPLIT,$0-16
 	MOVQ	AX, x+0(FP)
 	MOVQ	CX, y+8(FP)
 	JMP	runtime·goPanicSlice3CU(SB)
+TEXT runtime·mb(SB),NOSPLIT,$0-0
+	MFENCE
+	RET
+TEXT runtime·rmb(SB),NOSPLIT,$0-0
+	LFENCE
+	RET
+TEXT runtime·wmb(SB),NOSPLIT,$0-0
+	SFENCE
+	RET
 
 #ifdef GOOS_android
 // Use the free TLS_SLOT_APP slot #2 on Android Q.

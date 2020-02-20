@@ -1051,3 +1051,12 @@ TEXT runtime·panicSlice3CU(SB),NOSPLIT,$0-16
 	MOVD	R3, x+0(FP)
 	MOVD	R4, y+8(FP)
 	JMP	runtime·goPanicSlice3CU(SB)
+TEXT runtime·mb(SB),NOSPLIT,$0-0
+	SYNC
+	RET
+TEXT runtime·rmb(SB),NOSPLIT,$0-0
+	LWSYNC
+	RET
+TEXT runtime·wmb(SB),NOSPLIT,$0-0
+	LWSYNC
+	RET
