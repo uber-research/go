@@ -12,10 +12,12 @@ package testdeps
 
 import (
 	"bufio"
+	"fmt"
 	"internal/testlog"
 	"io"
 	"regexp"
 	"runtime/pprof"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -38,14 +40,44 @@ func (TestDeps) MatchString(pat, str string) (result bool, err error) {
 	return matchRe.MatchString(str), nil
 }
 
-func (TestDeps) StartCPUProfile(w io.Writer) error {
-	return pprof.StartCPUProfile(w)
+func (TestDeps) StartCPUProfile(w io.Writer, event string, period int64) error {
+	if period < 0 {
+		return fmt.Errorf("cpuprofileperiod cannot be a negative value")
+	}
+
+	p := uint64(period)
+	switch event {
+	case "timer":
+		return pprof.StartCPUProfile(w)
+	case "cycles":
+		return pprof.StartCPUProfileWithConfig(pprof.CPUCycles(w, p))
+	case "instructions":
+		return pprof.StartCPUProfileWithConfig(pprof.CPUInstructions(w, p))
+	case "cacheReferences":
+		return pprof.StartCPUProfileWithConfig(pprof.CPUCacheReferences(w, p))
+	case "cacheMisses":
+		return pprof.StartCPUProfileWithConfig(pprof.CPUCacheMisses(w, p))
+	case "branchInstructions":
+		return pprof.StartCPUProfileWithConfig(pprof.CPUBranchInstructions(w, p))
+	case "branchMisses":
+		return pprof.StartCPUProfileWithConfig(pprof.CPUBranchMisses(w, p))
+
+	default:
+		// Is this a raw event?
+		if strings.HasPrefix(event, "r") {
+			if rawHexEvent, err := strconv.ParseUint(event[1:], 16, 64); err == nil {
+				return pprof.StartCPUProfileWithConfig(pprof.CPURawEvent(w, p, rawHexEvent))
+			}
+			return fmt.Errorf("Incorrect hex format for raw event")
+		} else {
+			return fmt.Errorf("Unknown or not yet implemented event")
+		}
+	}
 }
 
 func (TestDeps) StopCPUProfile() {
 	pprof.StopCPUProfile()
 }
-
 func (TestDeps) WriteProfileTo(name string, w io.Writer, debug int) error {
 	return pprof.Lookup(name).WriteTo(w, debug)
 }
