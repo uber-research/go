@@ -2705,14 +2705,15 @@
 // 	    Writes test binary as -c would.
 //
 // 	-cpuprofileevent event
-// 	    Specify which event to sample. An event is a source of sampling.
-// 	    To sample via OS timer, use -test.cpuprofileevent=timer. (default)
-// 	    To sample via hardware cycles, use -test.cpuprofileevent=cycles.
-// 	    To sample via hardware instructions, use -test.cpuprofileevent=instructions.
-// 	    To sample via hardware cache misses, use -test.cpuprofileevent=cacheMisses.
-// 	    To sample via hardware last-level cache read accesses, use -test.cpuprofileevent=cacheLLReadAccesses.
-// 	    To sample via hardware last-level cache read misses, use -test.cpuprofileevent=cacheLLReadMisses.
-// 	    To sample any hardware-provided event use -test.cpuprofileevent=r<event mask><event id>. Refer to your CPU manufacturer's manaul.
+// 	   Specify which event to sample. An event is a source of sampling.
+// 	   To sample via OS timer, use -test.cpuprofileevent=timer. (default)
+// 	   To sample via hardware cycles, use -test.cpuprofileevent=cycles.
+// 	   To sample via hardware instructions, use -test.cpuprofileevent=instructions.
+// 	   To sample via hardware branch instructions, use -test.cpuprofileevent=branchInstructions.
+// 	   To sample via hardware branch misses, use -test.cpuprofileevent=branchMisses.
+// 	   To sample via hardware last-level cache misses, use -test.cpuprofileevent=cacheMisses.
+// 	   To sample via hardware last-level cache references, use -test.cpuprofileevent=cacheReferences.
+// 	   To sample any hardware-provided event use -test.cpuprofileevent=r<event mask><event id>. Refer to your CPU manufacturer's manaul.
 //
 // 	-cpuprofileperiod n
 // 	    Set the sampling period for the hardware event specified by -cpuprofileevent.
