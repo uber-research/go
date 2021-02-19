@@ -874,10 +874,22 @@ func OSTimer(w io.Writer) ProfilingOption {
 	return cpuProfileConfigWrapper{w: w, hz: 100, event: _CPUPROF_OS_TIMER}
 }
 
+const (
+	rawEventPreset        = 100000
+	cyclesPreset          = 10000000
+	instructionsPreset    = 1000000
+	cacheReferencesPreset = 100000
+	cacheMissesPreset     = 10000
+	branchInsPreset       = 100000
+	branchMissesPreset    = 10000
+)
+
 // CPURawEvent returns a ProfilingOption interface for CPU profiling with a CPU-specific
 // raw event code passed in the hex parameter at the specified period and and serializes to w.
 func CPURawEvent(w io.Writer, period uint64, hex uint64) ProfilingOption {
-	if period < 1000 {
+	if period == 0 {
+		period = rawEventPreset
+	} else if period < 1000 {
 		period = 1000
 	}
 	return cpuProfileConfigWrapper{w: w, period: period, hex: hex, event: _CPUPROF_HW_RAW}
@@ -886,7 +898,9 @@ func CPURawEvent(w io.Writer, period uint64, hex uint64) ProfilingOption {
 // CPUCycles returns a ProfilingOption interface for CPU profiling with CPU cycles event
 // at the specified period and and serializes to w.
 func CPUCycles(w io.Writer, period uint64) ProfilingOption {
-	if period < 10000 {
+	if period == 0 {
+		period = cyclesPreset
+	} else if period < 10000 {
 		period = 10000
 	}
 	return cpuProfileConfigWrapper{w: w, period: period, event: _CPUPROF_HW_CPU_CYCLES}
@@ -895,7 +909,9 @@ func CPUCycles(w io.Writer, period uint64) ProfilingOption {
 // CPUInstructions returns a ProfilingOption interface for CPU profiling with CPU instructions event
 // at the specified period and and serializes to w.
 func CPUInstructions(w io.Writer, period uint64) ProfilingOption {
-	if period < 10000 {
+	if period == 0 {
+		period = instructionsPreset
+	} else if period < 10000 {
 		period = 10000
 	}
 	return cpuProfileConfigWrapper{w: w, period: period, event: _CPUPROF_HW_INSTRUCTIONS}
@@ -904,7 +920,9 @@ func CPUInstructions(w io.Writer, period uint64) ProfilingOption {
 // CPUCacheReferences returns a ProfilingOption interface for CPU profiling with CPU last-level
 // cache references at the specified period and and serializes to w.
 func CPUCacheReferences(w io.Writer, period uint64) ProfilingOption {
-	if period < 10000 {
+	if period == 0 {
+		period = cacheReferencesPreset
+	} else if period < 10000 {
 		period = 10000
 	}
 	return cpuProfileConfigWrapper{w: w, period: period, event: _CPUPROF_HW_CACHE_REFERENCES}
@@ -913,7 +931,9 @@ func CPUCacheReferences(w io.Writer, period uint64) ProfilingOption {
 // CPUCacheMisses returns a ProfilingOption interface for CPU profiling with CPU last-level
 // cache misses at the specified period and and serializes to w.
 func CPUCacheMisses(w io.Writer, period uint64) ProfilingOption {
-	if period < 1000 {
+	if period == 0 {
+		period = cacheMissesPreset
+	} else if period < 1000 {
 		period = 1000
 	}
 	return cpuProfileConfigWrapper{w: w, period: period, event: _CPUPROF_HW_CACHE_MISSES}
@@ -922,7 +942,9 @@ func CPUCacheMisses(w io.Writer, period uint64) ProfilingOption {
 // CPUBranchInstructions returns a ProfilingOption interface for CPU profiling with CPU
 // branch instructions at the specified period and and serializes to w.
 func CPUBranchInstructions(w io.Writer, period uint64) ProfilingOption {
-	if period < 1000 {
+	if period == 0 {
+		period = branchInsPreset
+	} else if period < 1000 {
 		period = 1000
 	}
 	return cpuProfileConfigWrapper{w: w, period: period, event: _CPUPROF_HW_BRANCH_INSTRUCTIONS}
@@ -931,7 +953,9 @@ func CPUBranchInstructions(w io.Writer, period uint64) ProfilingOption {
 // CPUBranchInstructions returns a ProfilingOption interface for CPU profiling with CPU
 // branch misses at the specified period and and serializes to w.
 func CPUBranchMisses(w io.Writer, period uint64) ProfilingOption {
-	if period < 1000 {
+	if period == 0 {
+		period = branchMissesPreset
+	} else if period < 1000 {
 		period = 1000
 	}
 	return cpuProfileConfigWrapper{w: w, period: period, event: _CPUPROF_HW_BRANCH_MISSES}
