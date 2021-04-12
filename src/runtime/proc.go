@@ -2539,16 +2539,18 @@ func execute(gp *g, inheritTime bool) {
 	// a monotonically increasing counter in schedt and M and comparing them.
 
 	// Check whether the timer profiler needs to be turned on or off.
-	if _g_.m.profConfig[_CPUPROF_OS_TIMER] != sched.profConfig[_CPUPROF_OS_TIMER] {
-		setThreadOSTimerProfiler(sched.profConfig[_CPUPROF_OS_TIMER])
+	cfg := (*cpuProfileConfig) (atomic.Loadp(unsafe.Pointer(&sched.profConfig[_CPUPROF_OS_TIMER])))
+	if _g_.m.profConfig[_CPUPROF_OS_TIMER] != cfg {
+		setThreadOSTimerProfiler(cfg)
 	}
 
 	// Check whether the PMU profilers need to be turned on or off.
 	if setThreadPMUProfilerFunc != nil {
 		profConfig := sched.profConfig
 		for eventId := _CPUPROF_FIRST_PMU_EVENT; eventId < _CPUPROF_EVENTS_MAX; eventId++ {
-			if _g_.m.profConfig[eventId] != profConfig[eventId] {
-				setThreadPMUProfilerFunc(eventId, profConfig[eventId])
+			cfg := (*cpuProfileConfig) (atomic.Loadp(unsafe.Pointer(&profConfig[eventId])))
+			if _g_.m.profConfig[eventId] != cfg {
+				setThreadPMUProfilerFunc(eventId, cfg)
 			}
 		}
 	}
@@ -4655,12 +4657,14 @@ func setcpuprofileconfig(eventId cpuEvent, profConfig *cpuProfileConfig) {
 		}
 		prof[eventId].config = profConfig
 	}
+
 	atomic.Store(&signalLock, 0)
 	_g_.m.profileSetup = 0
 
-	lock(&sched.lock)
-	sched.profConfig[eventId] = profConfig
-	unlock(&sched.lock)
+	//lock(&sched.lock)
+	//sched.profConfig[eventId] = profConfig
+	atomicstorep(unsafe.Pointer(&sched.profConfig[eventId]), unsafe.Pointer(profConfig))
+	//unlock(&sched.lock)
 
 	if profConfig != nil {
 		if eventId == _CPUPROF_OS_TIMER {
@@ -4669,6 +4673,7 @@ func setcpuprofileconfig(eventId cpuEvent, profConfig *cpuProfileConfig) {
 			setThreadPMUProfilerFunc(eventId, profConfig)
 		}
 	}
+	
 	_g_.m.locks--
 }
 

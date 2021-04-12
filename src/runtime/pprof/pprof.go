@@ -1089,6 +1089,7 @@ func readProfile(eventId cpuEvent) (data []uint64, tags []unsafe.Pointer, eof bo
 func setCPUProfileConfig(eventId cpuEvent, profConfig *cpuProfileConfig)
 
 func profileWriter() {
+	
 	var b [_CPUPROF_EVENTS_MAX]*profileBuilder
 	for i := _CPUPROF_FIRST_EVENT; i < _CPUPROF_EVENTS_MAX; i++ {
 		if cpu.activeWriter[i] != nil {

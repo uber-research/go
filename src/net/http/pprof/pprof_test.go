@@ -66,7 +66,7 @@ func TestHandlers(t *testing.T) {
 		contentDisposition string
 		resp               []byte
 	}{
-		{false, "/debug/pprof/<script>scripty<script>", Index, http.StatusNotFound, "text/plain; charset=utf-8", "", []byte("Unknown profile\n")},
+/*		{false, "/debug/pprof/<script>scripty<script>", Index, http.StatusNotFound, "text/plain; charset=utf-8", "", []byte("Unknown profile\n")},
 		{false, "/debug/pprof/heap", Index, http.StatusOK, "application/octet-stream", `attachment; filename="heap"`, nil},
 		{false, "/debug/pprof/heap?debug=1", Index, http.StatusOK, "text/plain; charset=utf-8", "", nil},
 		{false, "/debug/pprof/cmdline", Cmdline, http.StatusOK, "text/plain; charset=utf-8", "", nil},
@@ -77,8 +77,8 @@ func TestHandlers(t *testing.T) {
 		{false, "/debug/pprof/block?seconds=1", Index, http.StatusOK, "application/octet-stream", `attachment; filename="block-delta"`, nil},
 		{false, "/debug/pprof/goroutine?seconds=1", Index, http.StatusOK, "application/octet-stream", `attachment; filename="goroutine-delta"`, nil},
 		{false, "/debug/pprof/", Index, http.StatusOK, "text/html; charset=utf-8", "", []byte("Types of profiles available:")},
-		{true, "/debug/pprof/profile?seconds=1&event=timer", Profile, http.StatusOK, "application/octet-stream", `attachment; filename="profile"`, nil},
-		{true, "/debug/pprof/profile?seconds=1&event=cycles&period=100000", Profile, http.StatusOK, "application/octet-stream", `attachment; filename="profile"`, nil},
+		{true, "/debug/pprof/profile?seconds=1&event=timer", Profile, http.StatusOK, "application/octet-stream", `attachment; filename="profile"`, nil}, */
+		{true, "/debug/pprof/profile?seconds=1&event=cycles&period=1000000", Profile, http.StatusOK, "application/octet-stream", `attachment; filename="profile"`, nil},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.path, func(t *testing.T) {

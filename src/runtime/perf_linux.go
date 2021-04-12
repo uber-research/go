@@ -12,12 +12,14 @@ func perfEventOpen(attr *perfEventAttr, pid uintptr, cpu, groupFd int32, flags u
 const perfDataPages = 2 // use 2^n data pages
 
 func perfAttrInit(eventId cpuEvent, profConfig *cpuProfileConfig, perfAttr *perfEventAttr) {
+	//perfAttr._type = _PERF_TYPE_HARDWARE //perfEventOpt[eventId]._type
 	perfAttr._type = perfEventOpt[eventId]._type
 	perfAttr.size = uint32(unsafe.Sizeof(*perfAttr))
 
 	if eventId == _CPUPROF_HW_RAW {
 		perfAttr.config = profConfig.rawEvent
 	} else {
+		//perfAttr.config = _PERF_COUNT_HW_CPU_CYCLES //perfEventOpt[eventId].config
 		perfAttr.config = perfEventOpt[eventId].config
 	}
 
