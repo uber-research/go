@@ -542,8 +542,10 @@ func setThreadPMUProfiler(eventId cpuEvent, profConfig *cpuProfileConfig) {
 	var perfAttr perfEventAttr
 	perfAttrInit(eventId, profConfig, &perfAttr)
 	fd := perfEventOpen(&perfAttr, 0, -1, -1, uintptr(0))
-	if fd == -1 {
-		println("Linux perf event open failed")
+	if fd  < 0  {
+		//dont print because a filed perfEventOpen can be enabled later.
+		//perfEventOpen can fail due to interrupted system call.
+		//println("Linux perf event open failed")
 		return
 	}
 
