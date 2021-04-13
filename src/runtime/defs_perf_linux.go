@@ -1,17 +1,21 @@
 package runtime
 
-// Convert platform-agnostic pmu events to Linux perf events
-var perfEventOpt = map[cpuEvent]struct {
+type perfEventStruct struct {
 	_type  uint32 // type of event
 	config uint64 // event
-}{
-	_CPUPROF_HW_CPU_CYCLES:          {_PERF_TYPE_HARDWARE, _PERF_COUNT_HW_CPU_CYCLES},
-	_CPUPROF_HW_INSTRUCTIONS:        {_PERF_TYPE_HARDWARE, _PERF_COUNT_HW_INSTRUCTIONS},
-	_CPUPROF_HW_CACHE_REFERENCES:    {_PERF_TYPE_HARDWARE, _PERF_COUNT_HW_CACHE_REFERENCES},
-	_CPUPROF_HW_CACHE_MISSES:        {_PERF_TYPE_HARDWARE, _PERF_COUNT_HW_CACHE_MISSES},
-	_CPUPROF_HW_BRANCH_INSTRUCTIONS: {_PERF_TYPE_HARDWARE, _PERF_COUNT_HW_BRANCH_INSTRUCTIONS},
-	_CPUPROF_HW_BRANCH_MISSES:       {_PERF_TYPE_HARDWARE, _PERF_COUNT_HW_BRANCH_MISSES},
-	_CPUPROF_HW_RAW:                 {_PERF_TYPE_RAW, 0 /* will not be used */},
+}
+
+// Convert platform-agnostic pmu events to Linux perf events
+// This is a carefully mapped array, not a map because, concurrent map access causes data race.
+var perfEventOpt [_CPUPROF_EVENTS_MAX]perfEventStruct = [_CPUPROF_EVENTS_MAX]perfEventStruct{
+	_CPUPROF_OS_TIMER:               perfEventStruct{0, 0},
+	_CPUPROF_HW_CPU_CYCLES:          perfEventStruct{_PERF_TYPE_HARDWARE, _PERF_COUNT_HW_CPU_CYCLES},
+	_CPUPROF_HW_INSTRUCTIONS:        perfEventStruct{_PERF_TYPE_HARDWARE, _PERF_COUNT_HW_INSTRUCTIONS},
+	_CPUPROF_HW_CACHE_REFERENCES:    perfEventStruct{_PERF_TYPE_HARDWARE, _PERF_COUNT_HW_CACHE_REFERENCES},
+	_CPUPROF_HW_CACHE_MISSES:        perfEventStruct{_PERF_TYPE_HARDWARE, _PERF_COUNT_HW_CACHE_MISSES},
+	_CPUPROF_HW_BRANCH_INSTRUCTIONS: perfEventStruct{_PERF_TYPE_HARDWARE, _PERF_COUNT_HW_BRANCH_INSTRUCTIONS},
+	_CPUPROF_HW_BRANCH_MISSES:       perfEventStruct{_PERF_TYPE_HARDWARE, _PERF_COUNT_HW_BRANCH_MISSES},
+	_CPUPROF_HW_RAW:                 perfEventStruct{_PERF_TYPE_RAW, 0 /* will not be used */},
 	// TODO: add more perf events
 }
 
