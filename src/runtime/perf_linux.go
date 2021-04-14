@@ -11,6 +11,11 @@ func perfEventOpen(attr *perfEventAttr, pid uintptr, cpu, groupFd int32, flags u
 
 const perfDataPages = 2 // use 2^n data pages
 
+func (perfAttr *perfEventAttr) setPrecision(precision profilePCPrecision) {
+	perfAttr.bits &^= (uint64(3) << 15)
+	perfAttr.bits |= uint64(precision) << 15
+}
+
 func perfAttrInit(eventId cpuEvent, profConfig *cpuProfileConfig, perfAttr *perfEventAttr) {
 	perfAttr._type = perfEventOpt[eventId]._type
 	perfAttr.size = uint32(unsafe.Sizeof(*perfAttr))
