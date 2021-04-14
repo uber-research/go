@@ -40,10 +40,11 @@ const (
 type profilePCPrecision uint8
 
 const (
-	_CPUPROF_IP_ARBITRARY_SKID profilePCPrecision = iota
-	_CPUPROF_IP_CONSTANT_SKID
+	_CPUPROF_IP_ARBITRARY_SKID, _CPUPROF_IP_FIRST_PRECISION profilePCPrecision = iota, iota
+	_CPUPROF_IP_CONSTANT_SKID                                                  = iota
 	_CPUPROF_IP_SUGGEST_NO_SKID
-	_CPUPROF_IP_NO_SKID
+	_CPUPROF_IP_NO_SKID, _CPUPROF_IP_LAST_PRECISION = iota, iota
+	_CPUPROF_IP_BEST_AVAILABLE_SKID                 = iota
 )
 
 // cpuProfileConfig holds different settings under which CPU samples can be produced.
@@ -138,7 +139,21 @@ func sanitizeCPUProfileConfig(profConfig *cpuProfileConfig) {
 	if profConfig == nil {
 		return
 	}
-	profConfig.preciseIP = _CPUPROF_IP_ARBITRARY_SKID
+	precision := _CPUPROF_IP_ARBITRARY_SKID
+	switch gogetenv("GO_PPROF_PRECISION") {
+	case "0":
+		precision = _CPUPROF_IP_ARBITRARY_SKID
+	case "1":
+		precision = _CPUPROF_IP_CONSTANT_SKID
+	case "2":
+		precision = _CPUPROF_IP_SUGGEST_NO_SKID
+	case "3":
+		precision = _CPUPROF_IP_NO_SKID
+	case "4":
+		precision = _CPUPROF_IP_BEST_AVAILABLE_SKID
+	default:
+	}
+	atomic.Store8((*uint8)(&profConfig.preciseIP), uint8(precision))
 	profConfig.isSampleIPIncluded = false
 	profConfig.isSampleThreadIDIncluded = false
 	profConfig.isSampleAddrIncluded = false
