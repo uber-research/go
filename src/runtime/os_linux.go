@@ -5,6 +5,7 @@
 package runtime
 
 import (
+	"runtime/internal/atomic"
 	"runtime/internal/sys"
 	"unsafe"
 )
@@ -543,9 +544,25 @@ func setThreadPMUProfiler(eventId cpuEvent, profConfig *cpuProfileConfig) {
 
 	// profConfig != nil
 	var perfAttr perfEventAttr
+	var fd int32
+	initialPrecision := profilePCPrecision(atomic.Load8((*uint8)(&profConfig.preciseIP)))
 	perfAttrInit(eventId, profConfig, &perfAttr)
-	fd := perfEventOpen(&perfAttr, 0, -1, -1, uintptr(0))
-	if fd  < 0  {
+	if initialPrecision != _CPUPROF_IP_BEST_AVAILABLE_SKID {
+		fd = perfEventOpen(&perfAttr, 0, -1, -1, uintptr(0))
+	} else {
+		// auto detect precision
+		for p := _CPUPROF_IP_LAST_PRECISION; p >= int(_CPUPROF_IP_FIRST_PRECISION); p-- {
+			perfAttr.setPrecision(profilePCPrecision(p))
+			fd = perfEventOpen(&perfAttr, 0, -1, -1, uintptr(0))
+			if fd >= 0 {
+				// Set the precision to a value that worked.
+				atomic.Store8((*uint8)(&profConfig.preciseIP), uint8(p))
+				break
+			}
+		}
+	}
+
+	if fd < 0 {
 		//dont print because a filed perfEventOpen can be enabled later.
 		//perfEventOpen can fail due to interrupted system call.
 		//println("Linux perf event open failed")
