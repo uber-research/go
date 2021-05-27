@@ -63,7 +63,6 @@ const (
 // isSampleAddrIncluded: include the memory address accessed at the time of generating the sample.
 // isKernelIncluded: count the events in the kernel mode.
 // isHvIncluded: count the events in the hypervisor mode.
-// isHvIncluded: include the kernel call chain at the time of the sample.
 // isIdleIncluded: count when the CPU is running the idle task.
 // isSampleCallchainIncluded: include the entire call chain seen at the time of the sample.
 // isCallchainKernelIncluded: include the kernel call chain seen at the time of the sample.
