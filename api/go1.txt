@@ -5757,7 +5757,7 @@ pkg runtime/pprof, func Profiles() []*Profile
 pkg runtime/pprof, func StartCPUProfile(io.Writer) error
 pkg runtime/pprof, func StopCPUProfile()
 pkg runtime/pprof, func WriteHeapProfile(io.Writer) error
-pkg runtime/pprof, func StartCPUProfileWithConfig(ProfilingOption, ...ProfilingOption) error
+pkg runtime/pprof, func StartCPUProfileWithConfig(...ProfilingOption) error
 pkg runtime/pprof, method (*Profile) Add(interface{}, int)
 pkg runtime/pprof, method (*Profile) Count() int
 pkg runtime/pprof, method (*Profile) Name() string

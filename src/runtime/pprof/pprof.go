@@ -788,14 +788,14 @@ func StartCPUProfile(w io.Writer) error {
 // CPUBranchMisses(w io.Writer, period uint64)
 // StartCPUProfileWithConfig returns an error if profiling is already enabled.
 // Event should be unique and writers must be unique.
-func StartCPUProfileWithConfig(opt ProfilingOption, moreOpts ...ProfilingOption) error {
-	if (len(moreOpts) > 0) && os.Getenv("GO_PPROF_ENABLE_MULTIPLE_CPU_PROFILES") != "true" {
+func StartCPUProfileWithConfig(opts ...ProfilingOption) error {
+	if (len(opts) > 1) && os.Getenv("GO_PPROF_ENABLE_MULTIPLE_CPU_PROFILES") != "true" {
 		return fmt.Errorf("StartCPUProfile with more than one ProfilingOption is not allowed. Enable it with GO_PPROF_ENABLE_MULTIPLE_CPU_PROFILES=true")
 	}
-	return startCPUProfileWithConfig(opt, moreOpts...)
+	return startCPUProfileWithConfig(opts...)
 }
 
-func startCPUProfileWithConfig(opt ProfilingOption, moreOpts ...ProfilingOption) error {
+func startCPUProfileWithConfig(opts ...ProfilingOption) error {
 	cpu.Lock()
 	defer cpu.Unlock()
 
@@ -809,11 +809,7 @@ func startCPUProfileWithConfig(opt ProfilingOption, moreOpts ...ProfilingOption)
 
 	cpu.uniqueWriters = make(map[io.Writer]struct{})
 
-	if err := opt.apply(); err != nil {
-		return cleanupCPUPriofileOnError(err)
-	}
-
-	for _, o := range moreOpts {
+	for _, o := range opts {
 		if err := o.apply(); err != nil {
 			return cleanupCPUPriofileOnError(err)
 		}
