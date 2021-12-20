@@ -4642,7 +4642,8 @@ func setcpuprofileconfig(eventId cpuEvent, profConfig *cpuProfileConfig) {
 			// Restore SIGPROF only if all events are stopped
 			eventsRunning := false
 			for i := _CPUPROF_FIRST_EVENT; i < _CPUPROF_EVENTS_MAX; i++ {
-				if prof[i].config != nil {
+				// If the current event is the last event to be stopped, we should also restore SIGPROF too.
+				if prof[i].config != nil && i != eventId {
 					eventsRunning = true
 					break
 				}
