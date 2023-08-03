@@ -389,6 +389,7 @@ func badPointer(s *mspan, p, refBase, refOff uintptr) {
 //
 //go:nosplit
 func findObject(p, refBase, refOff uintptr) (base uintptr, s *mspan, objIndex uintptr) {
+
 	s = spanOf(p)
 	// If s is nil, the virtual address has never been part of the heap.
 	// This pointer may be to some mmap'd region, so we allow it.
@@ -420,6 +421,7 @@ func findObject(p, refBase, refOff uintptr) (base uintptr, s *mspan, objIndex ui
 
 	objIndex = s.objIndex(p)
 	base = s.base() + objIndex*s.elemsize
+
 	return
 }
 

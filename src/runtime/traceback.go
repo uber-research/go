@@ -801,7 +801,8 @@ func printcreatedby1(f funcInfo, pc uintptr) {
 }
 
 func traceback(pc, sp, lr uintptr, gp *g) {
-	traceback1(pc, sp, lr, gp, 0)
+	// ANGE XXX: FIXME: set the flag to include printing of runtime frames
+	traceback1(pc, sp, lr, gp, 1)
 }
 
 // tracebacktrap is like traceback but expects that the PC and SP were obtained
@@ -1130,6 +1131,7 @@ func tracebackHexdump(stk stack, frame *stkframe, bad uintptr) {
 // If fixed is true, any goroutine that can vary between user and
 // system (that is, the finalizer goroutine) is considered a user
 // goroutine.
+// ANGE XXX: may be useful to filter out runtime versus user goroutines
 func isSystemGoroutine(gp *g, fixed bool) bool {
 	// Keep this in sync with internal/trace.IsSystemGoroutine.
 	f := findfunc(gp.startpc)

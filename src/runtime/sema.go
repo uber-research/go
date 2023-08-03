@@ -86,6 +86,7 @@ func readyWithTime(s *sudog, traceskip int) {
 	if s.releasetime != 0 {
 		s.releasetime = cputicks()
 	}
+	s.g.waiting_sema = nil
 	goready(s.g, traceskip)
 }
 
@@ -235,14 +236,18 @@ func cansemacquire(addr *uint32) bool {
 // queue adds s to the blocked goroutines in semaRoot.
 func (root *semaRoot) queue(addr *uint32, s *sudog, lifo bool) {
 	s.g = getg()
-	s.elem = unsafe.Pointer(addr)
+	// ANGE XXX: mask the addr so it doesn't get marked during GC
+	// through marking of the treap or marking of the blocked goroutine
+	var masked_addr unsafe.Pointer = gc_mask_ptr(unsafe.Pointer(addr))
+	s.g.waiting_sema = masked_addr
+	s.elem = masked_addr
 	s.next = nil
 	s.prev = nil
 
 	var last *sudog
 	pt := &root.treap
 	for t := *pt; t != nil; t = *pt {
-		if t.elem == unsafe.Pointer(addr) {
+		if t.elem == masked_addr {
 			// Already have addr in list.
 			if lifo {
 				// Substitute s in t's place in treap.
@@ -281,7 +286,7 @@ func (root *semaRoot) queue(addr *uint32, s *sudog, lifo bool) {
 			return
 		}
 		last = t
-		if uintptr(unsafe.Pointer(addr)) < uintptr(t.elem) {
+		if uintptr(masked_addr) < uintptr(t.elem) {
 			pt = &t.prev
 		} else {
 			pt = &t.next
@@ -323,11 +328,12 @@ func (root *semaRoot) queue(addr *uint32, s *sudog, lifo bool) {
 func (root *semaRoot) dequeue(addr *uint32) (found *sudog, now int64) {
 	ps := &root.treap
 	s := *ps
+	var masked_addr unsafe.Pointer = gc_mask_ptr(unsafe.Pointer(addr))
 	for ; s != nil; s = *ps {
-		if s.elem == unsafe.Pointer(addr) {
+		if s.elem == masked_addr {
 			goto Found
 		}
-		if uintptr(unsafe.Pointer(addr)) < uintptr(s.elem) {
+		if uintptr(masked_addr) < uintptr(s.elem) {
 			ps = &s.prev
 		} else {
 			ps = &s.next
