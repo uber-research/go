@@ -12,6 +12,7 @@ import (
 )
 
 // PrintStack prints to standard error the stack trace returned by runtime.Stack.
+// ANGE XXX: can use this to dump stack for debugging purpose
 func PrintStack() {
 	os.Stderr.Write(Stack())
 }

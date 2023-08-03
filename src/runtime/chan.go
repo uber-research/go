@@ -567,6 +567,8 @@ func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool)
 	}
 	// No stack splits between assigning elem and enqueuing mysg
 	// on gp.waiting where copystack can find it.
+	// ANGE XXX: we can access through a waiting gp.waiting
+	// to g et to mysg, which then get you to the channel it's waiting on
 	mysg.elem = ep
 	mysg.waitlink = nil
 	gp.waiting = mysg

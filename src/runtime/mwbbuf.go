@@ -213,6 +213,7 @@ func wbBufFlush(dst *uintptr, src uintptr) {
 //go:nowritebarrierrec
 //go:systemstack
 func wbBufFlush1(_p_ *p) {
+
 	// Get the buffered pointers.
 	start := uintptr(unsafe.Pointer(&_p_.wbBuf.buf[0]))
 	n := (_p_.wbBuf.next - start) / unsafe.Sizeof(_p_.wbBuf.buf[0])

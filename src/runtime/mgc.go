@@ -166,6 +166,8 @@ func gcinit() {
 	lockInit(&work.sweepWaiters.lock, lockRankSweepWaiters)
 	lockInit(&work.assistQueue.lock, lockRankAssistQueue)
 	lockInit(&work.wbufSpans.lock, lockRankWbufSpans)
+	// STOPPED HERE; need to figure out lock rank ordering
+	lockInit(&work.stackRootsLock, lockRankMark)
 }
 
 // gcenable is called after the bulk of the runtime initialization,
@@ -209,6 +211,8 @@ const (
 	_GCmarktermination        // GC mark termination: allocate black, P's help GC, write barrier ENABLED
 )
 
+// ANGE XXX: demark different phases of GC
+//
 //go:nosplit
 func setGCPhase(x uint32) {
 	atomic.Store(&gcphase, x)
@@ -322,20 +326,40 @@ type workType struct {
 	tstart int64
 	nwait  uint32
 
+	// ANGE XXX: the next three fields are used only when we perform the deadlock detection
+	ngcBgMarkWorker uint32 // ANGE XXX: number of gcBgMarkWorker participated in a GC cycle
+	gcMarkPhases    []note // ANGE XXX: to coordinate workers between mark phases
+
 	// Number of roots of various root types. Set by gcMarkRootPrepare.
 	//
-	// nStackRoots == len(stackRoots), but we have nStackRoots for
-	// consistency.
-	nDataRoots, nBSSRoots, nSpanRoots, nStackRoots int
+	// during normal GC cycle, nStackRoots == nValidStackRoots == len(stackRoots)
+	// during deadlock detection GC, nValidStackRoots is the number of stackRoots
+	// to examine, and nStackRoots == len(stackRoots), which include goroutines that are
+	// unmarked / not runnable
+	nDataRoots, nBSSRoots, nSpanRoots, nStackRoots, nValidStackRoots int
 
 	// Base indexes of each root type. Set by gcMarkRootPrepare.
 	baseData, baseBSS, baseSpans, baseStacks, baseEnd uint32
 
-	// stackRoots is a snapshot of all of the Gs that existed
-	// before the beginning of concurrent marking. The backing
-	// store of this must not be modified because it might be
-	// shared with allgs.
-	stackRoots []*g
+	// ANGE XXX: the snapshot of the markrootJobs that a gc background worker completed;
+	// this is used only when we run the deadlock detection in GC.
+	// the snapshot is used to coordinate among gc background workers and fiture out
+	// which worker is the last to complete a particular marking phase.
+	// initialized to all 0s before the marking phase begins
+	myMarkrootNext []int32
+
+	// ANGE XXX: lock for updating the content and indices pointing to stackRoots
+	stackRootsLock mutex
+
+	// ANGE XXX:
+	// stackRoots is a snapshot of all of the Gs that existed before the
+	// beginning of concurrent marking.  During deadlock detection GC, stackRoots
+	// is partitioned into two sets; to the left of nValidStackRoots are stackRoots
+	// of running / runnable goroutines and to the right of nValidStackRoots are
+	// stackRoots of unmarked / not runnable goroutines
+	// the gcDiscoverMoreStackRoots modify the stackRoots array to redo the partition
+	// after each marking phase
+	stackRoots []unsafe.Pointer
 
 	// Each type of GC state transition is protected by a lock.
 	// Since multiple threads can simultaneously detect the state
@@ -619,6 +643,7 @@ func gcStart(trigger gcTrigger) {
 	// We do this after re-checking the transition condition so
 	// that multiple goroutines that detect the heap trigger don't
 	// start multiple STW GCs.
+
 	mode := gcBackgroundMode
 	if debug.gcstoptheworld == 1 {
 		mode = gcForceMode
@@ -781,7 +806,11 @@ var gcMarkDoneFlushed uint32
 // it does transition to mark termination, then all reachable objects
 // have been marked, so the write barrier cannot shade any more
 // objects.
+//
+// ANGE XXX: we can probably intercept this function to add more roots to mark
+// and continue marking in this function
 func gcMarkDone() {
+
 	// Ensure only one thread is running the ragged barrier at a
 	// time.
 	semacquire(&work.markDoneSema)
@@ -914,13 +943,369 @@ top:
 	// allocations since the ragged barrier.
 	gcController.endCycle(now, int(gomaxprocs), work.userForced)
 
+	// ANGE XXX: added this
+	// gcReportDeadlock()
+
 	// Perform mark termination. This will restart the world.
 	gcMarkTermination()
+}
+
+func checkIfMarked(p unsafe.Pointer) bool {
+	obj, span, objIndex := findObject(uintptr(p), 0, 0)
+	if obj != 0 {
+		mbits := span.markBitsForIndex(objIndex)
+		return mbits.isMarked()
+	}
+	// not in heap
+	// check if it's in data or bss
+	for _, datap := range activeModules() {
+		if (datap.data <= uintptr(p) && uintptr(p) < datap.edata) ||
+			(datap.bss <= uintptr(p) && uintptr(p) < datap.ebss) {
+			return true
+		}
+	}
+
+	// This changes the amount of work GC does comapared to no-deadlock detection GC
+	ivIndex := work.nValidStackRoots
+	endIndex := work.nStackRoots
+	for i := ivIndex; i < endIndex; i++ {
+		var gp *g = (*g)(gc_undo_mask_ptr(work.stackRoots[i]))
+		if gp.stack.lo <= uintptr(p) && uintptr(p) < gp.stack.hi {
+			// ANGE XXX: either one should work ... even if the gp is not marked as valid
+			// right now, but is about to (e.g., because it's waiting on a channel
+			// already marked), it just means that we return false on p for now
+			// but will eventually return true for p the next time to check
+			// return false
+			return stackRootValid(gp)
+		}
+	}
+	// if we fall through to get here, we are within the stack ranges of reachable goroutines
+	return true
+}
+
+func getGoroutineName(gp *g) string {
+	var name string = "no name"
+	fn := findfunc(gp.startpc)
+	if fn.valid() {
+		name = funcname(fn)
+	}
+	return name
+}
+
+func printIfMarked(p unsafe.Pointer) {
+	if obj, span, objIndex := findObject(uintptr(p), 0, 0); obj != 0 {
+		mbits := span.markBitsForIndex(objIndex)
+		if mbits.isMarked() {
+			println("XXX ", p, " is marked.")
+		}
+	}
+}
+
+func printAllGoroutineInfo() {
+	for _, p := range allgs {
+		var gp *g = (*g)(gc_undo_mask_ptr(p))
+		printGoroutineInfo(gp)
+	}
+}
+
+func printGoroutineInfo(gp *g) string {
+	var name string = "no name"
+	fn := findfunc(gp.startpc)
+	if fn.valid() {
+		name = funcname(fn)
+	}
+	if gp.m != nil {
+		println("XXX g0: ", gp.m.g0, "g0 stack [", hex(gp.m.g0.stack.lo), "-", hex(gp.m.g0.stack.hi), "] gp: ", gp, "stack [", hex(gp.stack.lo), "-", hex(gp.stack.hi), "] name: ", name, "status: ", readgstatus(gp), " startpc: ", hex(gp.startpc), " gopc: ", hex(gp.gopc))
+	} else {
+		println("XXX gp: ", gp, "name: ", name, "status: ", readgstatus(gp), " startpc: ", hex(gp.startpc), " gopc: ", hex(gp.gopc))
+	}
+	if gp.waitreason != waitReasonZero {
+		println("XXX gp: ", gp, "wait reason: ", gp.waitreason.String())
+	}
+	for sg := gp.waiting; sg != nil; sg = sg.waitlink {
+		if sg.c != nil {
+			println("XXX waiting on channel: ", sg.c)
+			printIfMarked(unsafe.Pointer(sg.c))
+		}
+	}
+	if gp.waiting_sema != nil {
+		println("XXX waiting on sema: ", gp.waiting_sema)
+	}
+	return name
+}
+
+/*
+func gcReportDeadlock() {
+
+	if debug.gcdetectdeadlocks == 0 {
+		return // don't do anything unless the gc deadlock detection flag is set
+	}
+
+	println("XXX In gcReportDeadlock")
+	println("XXX ==================================== ")
+
+	// just sanity checks
+	for i := 0; i < work.nValidStackRoots; i++ {
+		var gp *g = (*g)(work.stackRoots[i])
+		if gp.gcscandone == false {
+			throw("stackRoots scanning not done!\n")
+		}
+	}
+
+	if work.nStackRoots != work.nValidStackRoots {
+		println("XXX POTENTIAL DEADLOCK DETECTED for the following goroutines:")
+	}
+	for i := work.nValidStackRoots; i < work.nStackRoots; i++ {
+		var gp *g = (*g)(gc_undo_mask_ptr(work.stackRoots[i]))
+		printGoroutineInfo(gp)
+		// just sanity checks
+		if gp.gcscandone == true {
+			throw("invalid stackRoots got scanned!\n")
+		}
+		gcGoexit(gp)
+	}
+}
+*/
+
+func stackRootValid(gp *g) bool {
+
+	name := getGoroutineName(gp)
+	// don't check if g is marked --- g could be marked even if
+	// it's not reachable
+	/* if checkIfMarked(unsafe.Pointer(gp)) {
+		println("XXX gp ", gp, "(", name, ") marked; valid root")
+		return true
+	} else
+	*/
+	if gp.waiting != nil {
+		var sg *sudog = nil
+		for sg = gp.waiting; sg != nil; sg = sg.waitlink {
+			if checkIfMarked(unsafe.Pointer(sg.c)) {
+				println("XXX gp ", gp, "(", name, ") waiting on a channel ", sg.c, " marked; valid root")
+				return true
+			}
+		}
+	}
+	if gp.waiting_sema != nil {
+		var addr unsafe.Pointer = gc_undo_mask_ptr(gp.waiting_sema)
+		if checkIfMarked(addr) {
+			println("XXX gp ", gp, "(", name, ") waiting on a sema", addr, " marked; valid root")
+			return true
+		}
+	}
+	println("XXX Not gp ", name, " nor its channels are not marked; not valid root")
+	return false
+}
+
+// ANGE XXX: added new function
+// Check to see if more blocked but marked goroutines exist;
+// if so add them into root set and increment work.markrootJobs accordingly
+// return true if we need to run another phase of markroots; return false otherwise
+func gcDiscoverMoreStackRoots(myId uint32) (bool, bool) {
+
+	var moreRoots bool = false
+	var isLast bool = true
+
+	lock(&work.stackRootsLock)
+
+	if debug.gcddtrace != 0 {
+		println("XXX ", getg().m.p.ptr(), ": In gcDiscoverMoreStackRoots")
+		println("XXX ==================================== ")
+		println("XXX myId: ", myId)
+	}
+
+	// to begin with we have a set of unchecked stackRoots between
+	// vIndex and ivIndex.  During the loop, anything < vIndex should be
+	// valid stackRoots and anything >= ivIndex should be invalid stackRoots
+	// and the loop terminates when the two indices meet
+	var vIndex int = work.nValidStackRoots
+	var ivIndex int = work.nStackRoots
+
+	// ANGE XXX just sanitfy check; remove later
+	for i := 0; i < vIndex; i++ {
+		var gp *g = (*g)(work.stackRoots[i])
+		if gc_ptr_is_masked(unsafe.Pointer(gp)) {
+			throw("Stack root is masked and shouldn't be.")
+		}
+	}
+	for i := vIndex; i < work.nStackRoots; i++ {
+		var p unsafe.Pointer = work.stackRoots[i]
+		var gp *g = (*g)(gc_undo_mask_ptr(p))
+		if gc_ptr_is_masked(p) == false {
+			if debug.gcddtrace != 0 {
+				println("XXX vIndex: ", vIndex, "ivIndex: ", ivIndex)
+				println("XXX i: ", i, "p: ", p)
+			}
+			throw("Stack root should be masked and it's not.")
+		}
+		if gp.gcscandone == true {
+			if debug.gcddtrace != 0 {
+				println("XXX stackRoots ", i, " got scanned!")
+			}
+			throw("stackRoots should have not been scanned!\n")
+		}
+	}
+	// ANGE XXX end of sanitfy check; remove later
+
+	for vIndex < ivIndex {
+		var p unsafe.Pointer = work.stackRoots[vIndex]
+		var gp *g = (*g)(gc_undo_mask_ptr(p))
+		if stackRootValid(gp) == true {
+			work.stackRoots[vIndex] = unsafe.Pointer(gp)
+			vIndex = vIndex + 1
+		} else {
+			for {
+				ivIndex = ivIndex - 1
+				if ivIndex == vIndex {
+					break
+				}
+				var swapGp *g = (*g)(gc_undo_mask_ptr(work.stackRoots[ivIndex]))
+				if stackRootValid(swapGp) == true {
+					work.stackRoots[ivIndex] = p
+					work.stackRoots[vIndex] = unsafe.Pointer(swapGp)
+					vIndex = vIndex + 1
+					break
+				}
+			}
+		}
+	}
+
+	var oldRootJobs int32 = int32(atomic.Load(&work.markrootJobs))
+	var newRootJobs int32 = int32(work.baseStacks) + int32(vIndex)
+
+	// ANGE XXX just sanitfy check; remove later
+	for i := 0; i < vIndex; i++ {
+		var gp *g = (*g)(work.stackRoots[i])
+		if gc_ptr_is_masked(unsafe.Pointer(gp)) {
+			if debug.gcddtrace != 0 {
+				println("XXX nValidStackRoots: ", work.nValidStackRoots, "nStakcRoots: ", work.nStackRoots)
+				println("XXX vIndex: ", vIndex, "ivIndex: ", ivIndex)
+				println("XXX i: ", i, "gp: ", gp)
+			}
+			throw("Stack root is masked and shouldn't be.")
+		}
+	}
+	for i := vIndex; i < work.nStackRoots; i++ {
+		var p unsafe.Pointer = work.stackRoots[i]
+		if gc_ptr_is_masked(p) == false {
+			if debug.gcddtrace != 0 {
+				println("XXX vIndex: ", vIndex, "ivIndex: ", ivIndex)
+				println("XXX i: ", i, "p: ", p)
+			}
+			throw("Stack root should be masked and it's not.")
+		}
+	}
+	if oldRootJobs > newRootJobs {
+		if debug.gcddtrace != 0 {
+			println("XXX oldRootJobs: ", oldRootJobs, "newRootJobs: ", newRootJobs)
+		}
+		throw("oldRootJobs > newRootJobs!")
+	}
+	// ANGE XXX end of sanitfy check
+
+	if newRootJobs > oldRootJobs {
+		if debug.gcddtrace != 0 {
+			println("XXX ", (newRootJobs - oldRootJobs), " more stackRoots discovered")
+		}
+		// reset markrootNext as it could have been incremented past markrootJobs
+		work.nValidStackRoots = vIndex
+		atomic.Store(&work.markrootJobs, uint32(newRootJobs))
+		moreRoots = true
+	}
+
+	// update myMarkrootNext for this worker
+	// myOldRootNext := atomic.Loadint32(&work.myMarkrootNext[myId])
+	newRootNext := int32(atomic.Load(&work.markrootNext))
+	atomic.Storeint32(&work.myMarkrootNext[myId], newRootNext)
+
+	// markrootJobs and myMarkrootNext can only change while holding a lock
+	// a worker can only be working on a root with index larger than its copy of
+	// myMarkrootNext
+	if len(work.myMarkrootNext) < int(gomaxprocs) {
+		if debug.gcddtrace != 0 {
+			println("XXX len ", len(work.myMarkrootNext), "gomaxprocs ", gomaxprocs)
+		}
+		throw("len of myMarkRootNext < gomaxprocs")
+	}
+	for i := 0; i < len(work.myMarkrootNext); i++ {
+		otherRootNext := atomic.Loadint32(&work.myMarkrootNext[i])
+		if debug.gcddtrace != 0 {
+			println("XXX myMarkrootNext[", i, "] = ", otherRootNext)
+		}
+		// some worker may show up really late or never join for this GC cycle.
+		// those would have a otherRootJobs value of 0; if our value is also 0,
+		// we will have a smaller myId than that worker; if our value is > 0,
+		// we can go ahead and ignore that worker
+		if otherRootNext == -1 {
+			continue
+		}
+		if otherRootNext < newRootJobs {
+			isLast = false
+			break
+		}
+	}
+
+	// we didn't add any new roots and this is the last worker
+	// so anything unscanned at this point are unreachable
+	if oldRootJobs == newRootJobs && isLast == true {
+		// ANGE XXX: sanity check
+		for i := 0; i < work.nValidStackRoots; i++ {
+			var gp *g = (*g)(work.stackRoots[i])
+			if gc_ptr_is_masked(unsafe.Pointer(gp)) {
+				throw("Stack root is masked and shouldn't be.")
+			}
+			if gp.gcscandone == false {
+				throw("Stack root is not scanned.")
+			}
+		}
+		for i := work.nValidStackRoots; i < work.nStackRoots; i++ {
+			var p unsafe.Pointer = work.stackRoots[i]
+			var gp *g = (*g)(gc_undo_mask_ptr(work.stackRoots[i]))
+			if gc_ptr_is_masked(p) == false {
+				throw("Stack root is NOT masked and should be.")
+			}
+			if gp.gcscandone == true {
+				throw("Invalid stack root is scanned.")
+			}
+		}
+		// ANGE XXX: end of sanity check
+
+		// report deadlock, mark them unreachable, and resume marking
+		// we still need to mark these unreachable *g structs as they
+		// get reused, but their stack won't get scanned
+		if work.nValidStackRoots != work.nStackRoots {
+			println("POTENTIAL DEADLOCK DETECTED for the following goroutines:")
+			for i := work.nValidStackRoots; i < work.nStackRoots; i++ {
+				var gp *g = (*g)(gc_undo_mask_ptr(work.stackRoots[i]))
+				oldStatus := readgstatus(gp)
+				if oldStatus != _Gwaiting {
+					if debug.gcddtrace != 0 {
+						println("XXX: Supposedly unreachable goroutine", gp, "has status", oldStatus)
+					}
+					throw("Unexpected status of an unreachable goroutine")
+				}
+				casgstatus(gp, _Gwaiting, _Gunreachable)
+				printGoroutineInfo(gp)
+				work.stackRoots[i] = unsafe.Pointer(gp)
+			}
+			work.nValidStackRoots = work.nStackRoots
+			atomic.Store(&work.markrootJobs, uint32(work.nStackRoots))
+			moreRoots = true
+		}
+	}
+	unlock(&work.stackRootsLock)
+
+	return moreRoots, isLast
+}
+
+func MyGetG() unsafe.Pointer {
+	return unsafe.Pointer(getg())
 }
 
 // World must be stopped and mark assists and background workers must be
 // disabled.
 func gcMarkTermination() {
+
 	// Start marktermination (write barrier remains enabled for now).
 	setGCPhase(_GCmarktermination)
 
@@ -1087,7 +1472,7 @@ func gcMarkTermination() {
 	// worldsema another cycle could start and smash the stats
 	// we're trying to print.
 	if debug.gctrace > 0 {
-		util := int(memstats.gc_cpu_fraction * 100)
+		util := int32(memstats.gc_cpu_fraction * 100)
 
 		var sbuf [24]byte
 		printlock()
@@ -1149,13 +1534,19 @@ func gcMarkTermination() {
 // goroutines will not run until the mark phase, but they must be started while
 // the work is not stopped and from a regular G stack. The caller must hold
 // worldsema.
+// ANGE XXX: create go routine for background mark worker here
 func gcBgMarkStartWorkers() {
 	// Background marking is performed by per-P G's. Ensure that each P has
 	// a background GC G.
 	//
 	// Worker Gs don't exit if gomaxprocs is reduced. If it is raised
 	// again, we can reuse the old workers; no need to create new workers.
+
+	if debug.gcddtrace != 0 {
+		println("XXX creating ", gomaxprocs, " number of gcBg worker")
+	}
 	for gcBgMarkWorkerCount < gomaxprocs {
+		// ANGE XXX: FIXME --- add a new flag later
 		go gcBgMarkWorker()
 
 		notetsleepg(&work.bgMarkReady, -1)
@@ -1181,6 +1572,24 @@ func gcBgMarkPrepare() {
 	// there are no workers.
 	work.nproc = ^uint32(0)
 	work.nwait = ^uint32(0)
+	// work.ngcBgMarkWorker = uint32(0)
+
+	if len(work.gcMarkPhases) == 0 || len(work.gcMarkPhases) < int(gomaxprocs) {
+		work.gcMarkPhases = make([]note, gomaxprocs, gomaxprocs)
+		// just need to do this once; the gcBgMarkWorker will call
+		// noteclear for subsequent GC cycles
+		for i, _ := range work.gcMarkPhases {
+			n := &work.gcMarkPhases[i]
+			noteclear(n)
+		}
+	}
+	if len(work.myMarkrootNext) == 0 || len(work.myMarkrootNext) < int(gomaxprocs) {
+		work.myMarkrootNext = make([]int32, gomaxprocs, gomaxprocs)
+	}
+	// zero out the myMarkrootNext for every GC cycle
+	for i, _ := range work.myMarkrootNext {
+		work.myMarkrootNext[i] = -1
+	}
 }
 
 // gcBgMarkWorker is an entry in the gcBgMarkWorkerPool. It points to a single
@@ -1198,8 +1607,62 @@ type gcBgMarkWorkerNode struct {
 	m muintptr
 }
 
+// ANGE XXX: added new function
+// This function performs one phase of parallel marking and is invoked by
+// the gcBgMarkWorker goroutine.  A worker decrements work.nwait upon entry and
+// increments work.nwait upon exit; the last worker that increments the work.nwait
+// to equal work.nproc returns true to indicate that it is the last worker leaving
+// this mark phase.
+func gcOneMarkPhase(gp *g, pp *p) {
+
+	systemstack(func() {
+		// the G stack. However, stack shrinking i
+
+		// Mark our goroutine preemptible so its stack
+		// can be scanned. This lets two mark workers
+		// scan each other (otherwise, they would
+		// deadlock). We must not modify anything on
+		// the G stack. However, stack shrinking is
+		// disabled for mark workers, so it is safe to
+		// read from the G stack.
+		casgstatus(gp, _Grunning, _Gwaiting)
+		switch pp.gcMarkWorkerMode {
+		default:
+			throw("gcBgMarkWorker: unexpected gcMarkWorkerMode")
+		case gcMarkWorkerDedicatedMode:
+			gcDrain(&pp.gcw, gcDrainUntilPreempt|gcDrainFlushBgCredit)
+			if gp.preempt {
+				// We were preempted. This is
+				// a useful signal to kick
+				// everything out of the run
+				// queue so it can run
+				// somewhere else.
+				if drainQ, n := runqdrain(pp); n > 0 {
+					lock(&sched.lock)
+					globrunqputbatch(&drainQ, int32(n))
+					unlock(&sched.lock)
+				}
+			}
+			// Go back to draining, this time
+			// without preemption.
+			gcDrain(&pp.gcw, gcDrainFlushBgCredit)
+		case gcMarkWorkerFractionalMode:
+			gcDrain(&pp.gcw, gcDrainFractional|gcDrainUntilPreempt|gcDrainFlushBgCredit)
+		case gcMarkWorkerIdleMode:
+			gcDrain(&pp.gcw, gcDrainIdle|gcDrainUntilPreempt|gcDrainFlushBgCredit)
+		}
+		casgstatus(gp, _Gwaiting, _Grunning)
+	})
+}
+
 func gcBgMarkWorker() {
+
+	detectDeadlocks := debug.gcdetectdeadlocks > 0
 	gp := getg()
+	myId := atomic.Xadd(&work.ngcBgMarkWorker, 1) - 1 // fixed for the entire process
+	if debug.gcddtrace != 0 {
+		println("XXX: New gcBgMarkWorker gp: ", gp, "id:", myId, "g0:", gp.m.g0)
+	}
 
 	// We pass node to a gopark unlock function, so it can't be on
 	// the stack (see gopark). Prevent deadlock from recursively
@@ -1270,6 +1733,10 @@ func gcBgMarkWorker() {
 		node.m.set(acquirem())
 		pp := gp.m.p.ptr() // P can't change with preemption disabled.
 
+		lock(&work.stackRootsLock)
+		atomic.Storeint32(&work.myMarkrootNext[myId], 0)
+		unlock(&work.stackRootsLock)
+
 		if gcBlackenEnabled == 0 {
 			println("worker mode", pp.gcMarkWorkerMode)
 			throw("gcBgMarkWorker: blackening not enabled")
@@ -1292,42 +1759,49 @@ func gcBgMarkWorker() {
 			throw("work.nwait was > work.nproc")
 		}
 
-		systemstack(func() {
-			// Mark our goroutine preemptible so its stack
-			// can be scanned. This lets two mark workers
-			// scan each other (otherwise, they would
-			// deadlock). We must not modify anything on
-			// the G stack. However, stack shrinking is
-			// disabled for mark workers, so it is safe to
-			// read from the G stack.
-			casgstatus(gp, _Grunning, _Gwaiting)
-			switch pp.gcMarkWorkerMode {
-			default:
-				throw("gcBgMarkWorker: unexpected gcMarkWorkerMode")
-			case gcMarkWorkerDedicatedMode:
-				gcDrain(&pp.gcw, gcDrainUntilPreempt|gcDrainFlushBgCredit)
-				if gp.preempt {
-					// We were preempted. This is
-					// a useful signal to kick
-					// everything out of the run
-					// queue so it can run
-					// somewhere else.
-					if drainQ, n := runqdrain(pp); n > 0 {
-						lock(&sched.lock)
-						globrunqputbatch(&drainQ, int32(n))
-						unlock(&sched.lock)
+		if detectDeadlocks == false {
+			// regular GC; one phase suffice
+			gcOneMarkPhase(gp, pp)
+		} else {
+			// special GC run that performs deadlock detection
+			if debug.gcddtrace != 0 {
+				println("XXX gcWorker gp", getg(), "id", myId, "do more mark phase")
+			}
+			myNote := &work.gcMarkPhases[myId]
+
+			if int(myId) > len(work.gcMarkPhases) {
+				throw("myId out of array bound of gcMarkPhases")
+			}
+			if len(work.gcMarkPhases) < int(gomaxprocs) {
+				throw("len of gcMarkPhases < gomaxprocs")
+			}
+			noteclear(myNote)
+			for {
+				gcOneMarkPhase(gp, pp)
+				moreRoots, isLast := gcDiscoverMoreStackRoots(myId)
+
+				if !gcMarkWorkAvailable(nil) {
+					if isLast == false {
+						systemstack(func() {
+							notetsleep(myNote, 1000000)
+							noteclear(myNote)
+						})
+					} else if moreRoots == false {
+						// this is the last worker AND it didn't generate new work
+						// note that the last worker may have generated more work, but gcMarkWorkAvailable
+						// still return false, because between the time work is generated and the call
+						// to gcMarkWorkAvailable, the jobs generated may have been claimed by other
+						// workers.  In that case, the last worker still need to call gcDiscoverMoreRoots
+						// one last time to update its snapshot of myMarkrootNext instead of breaking out
+						if debug.gcddtrace != 0 {
+							println("XXX gp:", gp, "pp:", pp, "gcWorker:", myId, "breaks out")
+						}
+						atomic.Storeint32(&work.myMarkrootNext[myId], -1)
+						break
 					}
 				}
-				// Go back to draining, this time
-				// without preemption.
-				gcDrain(&pp.gcw, gcDrainFlushBgCredit)
-			case gcMarkWorkerFractionalMode:
-				gcDrain(&pp.gcw, gcDrainFractional|gcDrainUntilPreempt|gcDrainFlushBgCredit)
-			case gcMarkWorkerIdleMode:
-				gcDrain(&pp.gcw, gcDrainIdle|gcDrainUntilPreempt|gcDrainFlushBgCredit)
 			}
-			casgstatus(gp, _Gwaiting, _Grunning)
-		})
+		}
 
 		// Account for time and mark us as stopped.
 		now := nanotime()
@@ -1379,7 +1853,9 @@ func gcMarkWorkAvailable(p *p) bool {
 	if !work.full.empty() {
 		return true // global work available
 	}
-	if work.markrootNext < work.markrootJobs {
+	rootNext := atomic.Load(&work.markrootNext)
+	rootJobs := atomic.Load(&work.markrootJobs)
+	if rootNext < rootJobs {
 		return true // root scan work available
 	}
 	return false
@@ -1399,8 +1875,10 @@ func gcMark(startTime int64) {
 	work.tstart = startTime
 
 	// Check that there's no marking work remaining.
-	if work.full != 0 || work.markrootNext < work.markrootJobs {
-		print("runtime: full=", hex(work.full), " next=", work.markrootNext, " jobs=", work.markrootJobs, " nDataRoots=", work.nDataRoots, " nBSSRoots=", work.nBSSRoots, " nSpanRoots=", work.nSpanRoots, " nStackRoots=", work.nStackRoots, "\n")
+	rootNext := atomic.Load(&work.markrootNext)
+	rootJobs := atomic.Load(&work.markrootJobs)
+	if work.full != 0 || rootNext < rootJobs {
+		print("runtime: full=", hex(work.full), " next=", rootNext, " jobs=", rootJobs, " nDataRoots=", work.nDataRoots, " nBSSRoots=", work.nBSSRoots, " nSpanRoots=", work.nSpanRoots, " nStackRoots=", work.nStackRoots, "\n")
 		panic("non-empty mark queue after concurrent mark")
 	}
 

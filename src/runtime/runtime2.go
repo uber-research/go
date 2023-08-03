@@ -84,6 +84,9 @@ const (
 	// ready()ing this G.
 	_Gpreempted // 9
 
+	// ANGE XXX: Added new status to keep track of unreachable goroutines
+	_Gunreachable // 10
+
 	// _Gscan combined with one of the above states other than
 	// _Grunning indicates that GC is scanning the stack. The
 	// goroutine is not executing user code and the stack is owned
@@ -484,6 +487,7 @@ type g struct {
 	startpc        uintptr         // pc of goroutine function
 	racectx        uintptr
 	waiting        *sudog         // sudog structures this g is waiting on (that have a valid elem ptr); in lock order
+	waiting_sema   unsafe.Pointer // ANGE XXX: Added this to include sema into GC deadlock detection
 	cgoCtxt        []uintptr      // cgo traceback context
 	labels         unsafe.Pointer // profiler labels
 	timer          *timer         // cached timer for time.Sleep
@@ -518,9 +522,9 @@ const (
 
 // Values for m.freeWait.
 const (
-	freeMStack = 0  // M done, free stack and reference.
-	freeMRef   = 1  // M done, free reference.
-	freeMWait  = 2  // M still in use.
+	freeMStack = 0 // M done, free stack and reference.
+	freeMRef   = 1 // M done, free reference.
+	freeMWait  = 2 // M still in use.
 )
 
 type m struct {
@@ -552,7 +556,7 @@ type m struct {
 	blocked       bool // m is blocked on a note
 	newSigstack   bool // minit on C thread called sigaltstack
 	printlock     int8
-	incgo         bool   // m is executing a cgo call
+	incgo         bool          // m is executing a cgo call
 	freeWait      atomic.Uint32 // Whether it is safe to free g0 and delete m (one of freeMRef, freeMStack, freeMWait)
 	fastrand      uint64
 	needextram    bool

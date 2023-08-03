@@ -309,6 +309,8 @@ var debug struct {
 	clobberfree        int32
 	efence             int32
 	gccheckmark        int32
+	gcddtrace		   int32 // ANGE XXX: tracing for detect deadlocks during GC
+	gcdetectdeadlocks  int32 // ANGE XXX: detect deadlocks during GC
 	gcpacertrace       int32
 	gcshrinkstackoff   int32
 	gcstoptheworld     int32
@@ -338,6 +340,8 @@ var dbgvars = []dbgVar{
 	{"cgocheck", &debug.cgocheck},
 	{"efence", &debug.efence},
 	{"gccheckmark", &debug.gccheckmark},
+	{"gcddtrace", &debug.gcddtrace},
+	{"gcdetectdeadlocks", &debug.gcdetectdeadlocks},
 	{"gcpacertrace", &debug.gcpacertrace},
 	{"gcshrinkstackoff", &debug.gcshrinkstackoff},
 	{"gcstoptheworld", &debug.gcstoptheworld},
