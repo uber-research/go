@@ -87,6 +87,11 @@ const (
 	// ready()ing this G.
 	_Gpreempted // 9
 
+	// ANGE XXX: Added new status to keep track of unreachable goroutines
+	// and goroutines that have been deadlocked
+	_Gunreachable // 10
+	_Gdeadlocked  // 11
+
 	// _Gscan combined with one of the above states other than
 	// _Grunning indicates that GC is scanning the stack. The
 	// goroutine is not executing user code and the stack is owned
@@ -104,6 +109,8 @@ const (
 	_Gscansyscall   = _Gscan + _Gsyscall   // 0x1003
 	_Gscanwaiting   = _Gscan + _Gwaiting   // 0x1004
 	_Gscanpreempted = _Gscan + _Gpreempted // 0x1009
+
+	_Gscandeadlocked = _Gscan + _Gdeadlocked // 0x100b
 )
 
 const (
@@ -507,6 +514,9 @@ type g struct {
 	labels        unsafe.Pointer // profiler labels
 	timer         *timer         // cached timer for time.Sleep
 	selectDone    atomic.Uint32  // are we participating in a select and did someone win the race?
+
+	waiting_sema     unsafe.Pointer // Added this to include sema into GC deadlock detection
+	waiting_notifier unsafe.Pointer // Added this to include notifier into GC deadlock detection
 
 	coroarg *coro // argument during coroutine transfers
 
@@ -1112,6 +1122,7 @@ const (
 	waitReasonForceGCIdle                             // "force gc (idle)"
 	waitReasonSemacquire                              // "semacquire"
 	waitReasonSleep                                   // "sleep"
+	waitReasonSyncWaitGroupWait                       // "sync.WaitGroup.Wait"
 	waitReasonSyncCondWait                            // "sync.Cond.Wait"
 	waitReasonSyncMutexLock                           // "sync.Mutex.Lock"
 	waitReasonSyncRWMutexRLock                        // "sync.RWMutex.RLock"
@@ -1152,6 +1163,7 @@ var waitReasonStrings = [...]string{
 	waitReasonForceGCIdle:           "force gc (idle)",
 	waitReasonSemacquire:            "semacquire",
 	waitReasonSleep:                 "sleep",
+	waitReasonSyncWaitGroupWait:     "sync.WaitGroup.Wait",
 	waitReasonSyncCondWait:          "sync.Cond.Wait",
 	waitReasonSyncMutexLock:         "sync.Mutex.Lock",
 	waitReasonSyncRWMutexRLock:      "sync.RWMutex.RLock",
@@ -1182,6 +1194,12 @@ func (w waitReason) isMutexWait() bool {
 	return w == waitReasonSyncMutexLock ||
 		w == waitReasonSyncRWMutexRLock ||
 		w == waitReasonSyncRWMutexLock
+}
+
+func (w waitReason) isSyncWait() bool {
+	return w == waitReasonSyncWaitGroupWait ||
+		w == waitReasonSyncCondWait ||
+		w.isMutexWait()
 }
 
 var (

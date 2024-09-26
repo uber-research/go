@@ -100,9 +100,11 @@ type suspendGState struct {
 // directly schedule the waiter. The context switch is unavoidable in
 // the signal case.
 //
+// FIXME: Should figure out a better way to suspend goroutines during deadlock detection.
+//
 //go:systemstack
-func suspendG(gp *g) suspendGState {
-	if mp := getg().m; mp.curg != nil && readgstatus(mp.curg) == _Grunning {
+func suspendG(gp *g, pd bool) suspendGState {
+	if mp := getg().m; !pd && mp.curg != nil && readgstatus(mp.curg) == _Grunning {
 		// Since we're on the system stack of this M, the user
 		// G is stuck at an unsafe point. If another goroutine
 		// were to try to preempt m.curg, it could deadlock.
@@ -159,7 +161,7 @@ func suspendG(gp *g) suspendGState {
 			s = _Gwaiting
 			fallthrough
 
-		case _Grunnable, _Gsyscall, _Gwaiting:
+		case _Grunnable, _Gsyscall, _Gwaiting, _Gdeadlocked:
 			// Claim goroutine by setting scan bit.
 			// This may race with execution or readying of gp.
 			// The scan bit keeps it from transition state.
@@ -268,7 +270,8 @@ func resumeG(state suspendGState) {
 
 	case _Grunnable | _Gscan,
 		_Gwaiting | _Gscan,
-		_Gsyscall | _Gscan:
+		_Gsyscall | _Gscan,
+		_Gdeadlocked | _Gscan:
 		casfrom_Gscanstatus(gp, s, s&^_Gscan)
 	}
 

@@ -1174,6 +1174,9 @@ var gStatusStrings = [...]string{
 	_Gdead:      "dead",
 	_Gcopystack: "copystack",
 	_Gpreempted: "preempted",
+
+	_Gunreachable: "unreachable",
+	_Gdeadlocked:  "deadlocked",
 }
 
 func goroutineheader(gp *g) {

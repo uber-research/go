@@ -134,7 +134,7 @@ func goStatusToTraceGoStatus(status uint32, wr waitReason) traceGoStatus {
 		tgs = traceGoRunning
 	case _Gsyscall:
 		tgs = traceGoSyscall
-	case _Gwaiting, _Gpreempted:
+	case _Gwaiting, _Gpreempted, _Gdeadlocked:
 		// There are a number of cases where a G might end up in
 		// _Gwaiting but it's actually running in a non-preemptive
 		// state but needs to present itself as preempted to the

@@ -331,7 +331,7 @@ func traceAdvance(stopTrace bool) {
 			// The only situation that we might is that we're racing with a G
 			// that's running for the first time in this generation. Therefore,
 			// this should be relatively fast.
-			s := suspendG(gp)
+			s := suspendG(gp, false)
 			if !s.dead {
 				ug.goid = s.g.goid
 				if s.g.m != nil {

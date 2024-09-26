@@ -313,6 +313,7 @@ var debug struct {
 	dontfreezetheworld      int32
 	efence                  int32
 	gccheckmark             int32
+	gcdetectdeadlocks       int32 // Detect deadlocks during GC
 	gcpacertrace            int32
 	gcshrinkstackoff        int32
 	gcstoptheworld          int32
@@ -349,6 +350,7 @@ var dbgvars = []*dbgVar{
 	{name: "dontfreezetheworld", value: &debug.dontfreezetheworld},
 	{name: "efence", value: &debug.efence},
 	{name: "gccheckmark", value: &debug.gccheckmark},
+	{name: "gcdetectdeadlocks", value: &debug.gcdetectdeadlocks},
 	{name: "gcpacertrace", value: &debug.gcpacertrace},
 	{name: "gcshrinkstackoff", value: &debug.gcshrinkstackoff},
 	{name: "gcstoptheworld", value: &debug.gcstoptheworld},

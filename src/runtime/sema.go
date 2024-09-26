@@ -72,6 +72,11 @@ func sync_runtime_Semrelease(addr *uint32, handoff bool, skipframes int) {
 	semrelease1(addr, handoff, skipframes)
 }
 
+//go:linkname sync_runtime_SemacquireWaitGroup sync.runtime_SemacquireWaitGroup
+func sync_runtime_SemacquireWaitGroup(addr *uint32) {
+	semacquire1(addr, false, semaBlockProfile, 0, waitReasonSyncWaitGroupWait)
+}
+
 //go:linkname sync_runtime_SemacquireMutex sync.runtime_SemacquireMutex
 func sync_runtime_SemacquireMutex(addr *uint32, lifo bool, skipframes int) {
 	semacquire1(addr, lifo, semaBlockProfile|semaMutexProfile, skipframes, waitReasonSyncMutexLock)
@@ -96,6 +101,8 @@ func readyWithTime(s *sudog, traceskip int) {
 	if s.releasetime != 0 {
 		s.releasetime = cputicks()
 	}
+	s.g.waiting_sema = nil
+	s.g.waiting_notifier = nil
 	goready(s.g, traceskip)
 }
 
@@ -156,7 +163,7 @@ func semacquire1(addr *uint32, lifo bool, profile semaProfileFlags, skipframes i
 		}
 		// Any semrelease after the cansemacquire knows we're waiting
 		// (we set nwait above), so go to sleep.
-		root.queue(addr, s, lifo)
+		root.queue(addr, s, lifo, reason.isSyncWait())
 		goparkunlock(&root.lock, reason, traceBlockSync, 4+skipframes)
 		if s.ticket != 0 || cansemacquire(addr) {
 			break
@@ -264,9 +271,16 @@ func cansemacquire(addr *uint32) bool {
 }
 
 // queue adds s to the blocked goroutines in semaRoot.
-func (root *semaRoot) queue(addr *uint32, s *sudog, lifo bool) {
+func (root *semaRoot) queue(addr *uint32, s *sudog, lifo bool, isSyncSema bool) {
 	s.g = getg()
-	s.elem = unsafe.Pointer(addr)
+	var masked_addr = unsafe.Pointer(addr)
+	if isSyncSema {
+		// Mask the addr so it doesn't get marked during GC
+		// through marking of the treap or marking of the blocked goroutine
+		masked_addr = gcMask(unsafe.Pointer(addr))
+		s.g.waiting_sema = masked_addr
+	}
+	s.elem = masked_addr
 	s.next = nil
 	s.prev = nil
 	s.waiters = 0
@@ -274,7 +288,7 @@ func (root *semaRoot) queue(addr *uint32, s *sudog, lifo bool) {
 	var last *sudog
 	pt := &root.treap
 	for t := *pt; t != nil; t = *pt {
-		if t.elem == unsafe.Pointer(addr) {
+		if t.elem == masked_addr {
 			// Already have addr in list.
 			if lifo {
 				// Substitute s in t's place in treap.
@@ -320,7 +334,7 @@ func (root *semaRoot) queue(addr *uint32, s *sudog, lifo bool) {
 			return
 		}
 		last = t
-		if uintptr(unsafe.Pointer(addr)) < uintptr(t.elem) {
+		if uintptr(masked_addr) < uintptr(t.elem) {
 			pt = &t.prev
 		} else {
 			pt = &t.next
@@ -355,6 +369,117 @@ func (root *semaRoot) queue(addr *uint32, s *sudog, lifo bool) {
 	}
 }
 
+// Dequeue the deadlocked goroutine from the semaphore treap.
+func (root *semaRoot) gcDequeue(gp *g, addr *uint32) *sudog {
+	lockWithRank(&root.lock, lockRankRoot)
+
+	// Get the sudog's parent in the treap.
+	ps := &root.treap
+	s := *ps
+	// Can be assumed that the sema address is masked, because only
+	// a goroutine blocked on a masked sema can be flagged as deadlocked
+	// and reclaimed by the run-time.
+	var masked_addr unsafe.Pointer = gcMask(unsafe.Pointer(addr))
+	// Cycle through the treap to find the right sudog.
+	for ; s != nil; s = *ps {
+		if s.elem == masked_addr {
+			goto Found
+		}
+		if uintptr(masked_addr) < uintptr(s.elem) {
+			ps = &s.prev
+		} else {
+			ps = &s.next
+		}
+	}
+	// we can only fall through to this point if addr not found
+	throw("Sema addr not found in the semTable!")
+
+Found:
+	// ANGE XXX Notes on the semTable treap structure
+	// a sudog's parent / prev / next maintains the binary tree structure
+	// for the treap, and the weitlink forms the linked list of sudogs
+	// waiting on the same addr; the ticket field is used to maintain the
+	// balanced tree property
+	// In the linked list, only the sudog at the head of the list is
+	// in the treap (i.e., maintains non-nil parent / prev / next)
+	target := s
+	if t := s.waitlink; t != nil {
+		var targetPred *sudog = nil
+		// Cycle through the linked list to find the right sudog.
+		for ; target != nil && target.g != gp; target, targetPred = target.waitlink, target {
+		}
+
+		if target == nil {
+			throw("The unreachable goroutine not found in the semTable!")
+		}
+		if target.g != gp {
+			println("Wanted:", unsafe.Pointer(gp), "Got:", unsafe.Pointer(target.g))
+			throw("Targetted wrong sudog node.")
+		}
+
+		if target == s {
+			// we are actually removing s
+			// Substitute t, also waiting on addr, for s in root tree of unique addrs.
+			*ps = t
+			t.ticket = s.ticket
+			t.parent = s.parent
+			t.prev = s.prev
+			if t.prev != nil {
+				t.prev.parent = t
+			}
+			t.next = s.next
+			if t.next != nil {
+				t.next.parent = t
+			}
+			if t.waitlink != nil {
+				t.waittail = s.waittail
+			} else {
+				t.waittail = nil
+			}
+		} else {
+			// unlinking target that is not s
+			targetPred.waitlink = target.waitlink
+			if targetPred.waitlink == nil {
+				s.waittail = targetPred
+			}
+		}
+		target.waitlink = nil
+		target.waittail = nil
+	} else {
+		if target.g != gp {
+			throw("Unreachable g not found in the semTable")
+		}
+		// Rotate s down to be leaf of tree for removal, respecting priorities.
+		for target.next != nil || target.prev != nil {
+			if target.next == nil || target.prev != nil && target.prev.ticket < target.next.ticket {
+				root.rotateRight(target)
+			} else {
+				root.rotateLeft(target)
+			}
+		}
+		// Remove target, now a leaf.
+		if target.parent != nil {
+			if target.parent.prev == target {
+				target.parent.prev = nil
+			} else {
+				target.parent.next = nil
+			}
+		} else {
+			root.treap = nil
+		}
+	}
+	target.parent = nil
+	target.elem = nil
+	target.next = nil
+	target.prev = nil
+	target.ticket = 0
+
+	root.nwait.Add(-1)
+	unlock(&root.lock)
+
+	return target
+}
+
 // dequeue searches for and finds the first goroutine
 // in semaRoot blocked on addr.
 // If the sudog was being profiled, dequeue returns the time
@@ -365,6 +490,21 @@ func (root *semaRoot) queue(addr *uint32, s *sudog, lifo bool) {
 func (root *semaRoot) dequeue(addr *uint32) (found *sudog, now, tailtime int64) {
 	ps := &root.treap
 	s := *ps
+	var masked_addr unsafe.Pointer = gcMask(unsafe.Pointer(addr))
+	// Try to find a masked address.
+	for ; s != nil; s = *ps {
+		if s.elem == masked_addr {
+			goto Found
+		}
+		if uintptr(masked_addr) < uintptr(s.elem) {
+			ps = &s.prev
+		} else {
+			ps = &s.next
+		}
+	}
+	// Try to find an unmasked address.
+	ps = &root.treap
+	s = *ps
 	for ; s != nil; s = *ps {
 		if s.elem == unsafe.Pointer(addr) {
 			goto Found
@@ -553,6 +693,7 @@ func notifyListWait(l *notifyList, t uint32) {
 	// Enqueue itself.
 	s := acquireSudog()
 	s.g = getg()
+	s.g.waiting_notifier = gcMask(unsafe.Pointer(l))
 	s.ticket = t
 	s.releasetime = 0
 	t0 := int64(0)
@@ -659,6 +800,44 @@ func notifyListNotifyOne(l *notifyList) {
 		}
 	}
 	unlock(&l.lock)
+}
+
+// gcNotifyListNotifyOne updates the notify list to remove deadlocked
+// goroutine entries.
+func gcNotifyListNotifyOne(l *notifyList, gp *g) *sudog {
+	lockWithRank(&l.lock, lockRankNotifyList)
+
+	// Try to find the g that needs to be notified.
+	// If it hasn't made it to the list yet we won't find it,
+	// but it won't park itself once it sees the new notify number.
+	//
+	// This scan looks linear but essentially always stops quickly.
+	// Because g's queue separately from taking numbers,
+	// there may be minor reorderings in the list, but we
+	// expect the g we're looking for to be near the front.
+	// The g has others in front of it on the list only to the
+	// extent that it lost the race, so the iteration will not
+	// be too long. This applies even when the g is missing:
+	// it hasn't yet gotten to sleep and has lost the race to
+	// the (few) other g's that we find on the list.
+	for p, s := (*sudog)(nil), l.head; s != nil; p, s = s, s.next {
+		if s.g == gp {
+			n := s.next
+			if p != nil {
+				p.next = n
+			} else {
+				l.head = n
+			}
+			if n == nil {
+				l.tail = p
+			}
+			unlock(&l.lock)
+			s.next = nil
+			return s
+		}
+	}
+	unlock(&l.lock)
+	return nil
 }
 
 //go:linkname notifyListCheck sync.runtime_notifyListCheck

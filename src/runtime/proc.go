@@ -597,7 +597,7 @@ var (
 	// Readers that cannot take the lock may (carefully!) use the atomic
 	// variables below.
 	allglock mutex
-	allgs    []*g
+	allgs    []unsafe.Pointer
 
 	// allglen and allgptr are atomic variables that contain len(allgs) and
 	// &allgs[0] respectively. Proper ordering depends on totally-ordered
@@ -612,7 +612,7 @@ var (
 	// unsafe.Pointer, not uintptr, to ensure that GC can still reach it
 	// even if it points to a stale array.
 	allglen uintptr
-	allgptr **g
+	allgptr *unsafe.Pointer
 )
 
 func allgadd(gp *g) {
@@ -621,7 +621,7 @@ func allgadd(gp *g) {
 	}
 
 	lock(&allglock)
-	allgs = append(allgs, gp)
+	allgs = append(allgs, gcMask(unsafe.Pointer(gp)))
 	if &allgs[0] != allgptr {
 		atomicstorep(unsafe.Pointer(&allgptr), unsafe.Pointer(&allgs[0]))
 	}
@@ -632,7 +632,7 @@ func allgadd(gp *g) {
 // allGsSnapshot returns a snapshot of the slice of all Gs.
 //
 // The world must be stopped or allglock must be held.
-func allGsSnapshot() []*g {
+func allGsSnapshot() []unsafe.Pointer {
 	assertWorldStoppedOrLockHeld(&allglock)
 
 	// Because the world is stopped or allglock is held, allgadd
@@ -640,6 +640,12 @@ func allGsSnapshot() []*g {
 	// monotonically and existing entries never change, so we can
 	// simply return a copy of the slice header. For added safety,
 	// we trim everything past len because that can still change.
+	if debug.gcdetectdeadlocks != 0 {
+		for i, p := range allgs {
+			var gp *g = (*g)(gcUnmask(p))
+			allgs[i] = unsafe.Pointer(gp)
+		}
+	}
 	return allgs[:len(allgs):len(allgs)]
 }
 
@@ -661,7 +667,7 @@ func atomicAllGIndex(ptr **g, i uintptr) *g {
 func forEachG(fn func(gp *g)) {
 	lock(&allglock)
 	for _, gp := range allgs {
-		fn(gp)
+		fn((*g)(gcUnmask(gp)))
 	}
 	unlock(&allglock)
 }
@@ -674,7 +680,7 @@ func forEachGRace(fn func(gp *g)) {
 	ptr, length := atomicAllG()
 	for i := uintptr(0); i < length; i++ {
 		gp := atomicAllGIndex(ptr, i)
-		fn(gp)
+		fn((*g)(gcUnmask(unsafe.Pointer(gp))))
 	}
 	return
 }
@@ -1057,6 +1063,7 @@ func casfrom_Gscanstatus(gp *g, oldval, newval uint32) {
 		_Gscanwaiting,
 		_Gscanrunning,
 		_Gscansyscall,
+		_Gscandeadlocked,
 		_Gscanpreempted:
 		if newval == oldval&^_Gscan {
 			success = gp.atomicstatus.CompareAndSwap(oldval, newval)
@@ -1077,6 +1084,7 @@ func castogscanstatus(gp *g, oldval, newval uint32) bool {
 	case _Grunnable,
 		_Grunning,
 		_Gwaiting,
+		_Gdeadlocked,
 		_Gsyscall:
 		if newval == oldval|_Gscan {
 			r := gp.atomicstatus.CompareAndSwap(oldval, newval)
